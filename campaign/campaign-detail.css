@@ -1,1 +1,110 @@
+* {
+    box-sizing: border-box;
+}
+
+/* .nunito-<uniquifier> {
+  font-family: "Nunito", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: <weight>;
+  font-style: normal;
+} */
+
+.cam-Title {
+    font-family: "Nunito", sans-serif;
+}
+
+/* DOT  */
+.card-footer-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 1.2rem;
+}
+ 
+.dot-nav { display: flex; align-items: center; gap: 6px; }
+ 
+.dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+      transition: all 0.2s;
+      cursor: pointer;
+}
+ 
+.dot.active {
+      width: 22px;
+      border-radius: 4px;
+      background: white;
+}
+ 
+.nav-arrows { display: flex; gap: 8px; }
+ 
+.nav-btn {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      border-radius: 50%;
+      width: 38px;
+      height: 38px;
+      color: white;
+      font-size: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+}
+
+.nav-btn:hover { background: rgba(255,255,255,0.28); }
+
+
+/* SHARE  */
+.btn-share {
+    background: white;
+    color: #222;
+    border: 1.5px solid #bbb;
+    border-radius: 30px;
+    padding: 10px 36px;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 1.2rem auto 0;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+
+.btn-share:hover {
+    background: #f2f2f2;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+
+.btn-share svg { width: 18px; height: 18px; stroke: #333; fill: none; stroke-width: 2.2; }
+
+/* TOAST */
+
+.toast-msg {
+    position: fixed;
+    bottom: 1.5rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: #1b3d2a;
+    color: white;
+    padding: 10px 22px;
+    border-radius: 30px;
+    font-size: 14px;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s, transform 0.3s;
+    z-index: 999;
+    white-space: nowrap;
+}
+
+.toast-msg.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
 
