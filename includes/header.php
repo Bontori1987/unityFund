@@ -40,7 +40,7 @@ function _nav_active(string $file, string $cur): string {
         <a class="navbar-brand d-flex align-items-center gap-2"
            href="<?= $basePath ?>index.php">
             <img src="<?= $basePath ?>assets/logo.jpg" alt="UnityFund"
-                 style="height:36px;width:auto;border-radius:6px;object-fit:contain;">
+                 style="height:108px;width:auto;border-radius:6px;object-fit:contain;">
         </a>
 
         <button class="navbar-toggler border-0" type="button"

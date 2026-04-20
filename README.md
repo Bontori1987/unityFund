@@ -106,9 +106,9 @@ cp db.example.php db.php
 
 Edit `db.php` and fill in your SQL Server name, username, and password.
 
-### 3. Activate test accounts
+### 3. Test accounts
 
-Visit `/setup_test_accounts.php` once to write real bcrypt hashes for the sample users.
+Test accounts are seeded automatically when you run `schema.sql` — no extra steps needed.
 
 | Email | Password | Role |
 |-------|----------|------|
@@ -118,7 +118,15 @@ Visit `/setup_test_accounts.php` once to write real bcrypt hashes for the sample
 | host@example.com | org123 | Organizer |
 | admin@unityfund.com | admin123 | Admin |
 
-> `setup_test_accounts.php` is gitignored — never committed.
+**Existing database only** — if you already have the tables and need to fix the passwords, run this in SSMS:
+
+```sql
+UPDATE Users SET Password = '$2y$10$KY4GnyJG7LduYNztxucH8.BkLcoFxeKwOCRlP/DqWne7rzmJK5YDO' WHERE Email = 'alice@example.com';
+UPDATE Users SET Password = '$2y$10$gvck5Cwl.yI2ELMpE80U7.rp42D5jH5NdJHhkO1Ceh4HpTgEzfYkC' WHERE Email = 'bob@example.com';
+UPDATE Users SET Password = '$2y$10$jyNQtHBAXhYcrfij/P/J7uH5LhTfIZIi0cffLmXrLrDH8/8JJvNpK' WHERE Email = 'carol@example.com';
+UPDATE Users SET Password = '$2y$10$U0imT1oxpZ8kc7oSTL1im.rkLwbVjZ7FlZFK6Rmiu4eDgO/uAClL6' WHERE Email = 'admin@unityfund.com';
+UPDATE Users SET Password = '$2y$10$cUQvXVcTOGegTkW4A.9boOnCKClrOPJCMJEcxECT0LEVaQeoQ4TMW' WHERE Email = 'host@example.com';
+```
 
 ---
 

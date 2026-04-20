@@ -152,11 +152,11 @@ GO
 IF NOT EXISTS (SELECT 1 FROM Users)
 BEGIN
     INSERT INTO Users (Username, Email, Password, Role) VALUES
-        ('Alice Chen',   'alice@example.com',   '$2y$10$samplehash1', 'donor'),
-        ('Bob Torres',   'bob@example.com',     '$2y$10$samplehash2', 'donor'),
-        ('Carol White',  'carol@example.com',   '$2y$10$samplehash3', 'donor'),
-        ('Admin',        'admin@unityfund.com', '$2y$10$samplehash4', 'admin'),
-        ('FundCreator',  'host@example.com',    '$2y$10$samplehash5', 'organizer');
+        ('Alice Chen',  'alice@example.com',   '$2y$10$KY4GnyJG7LduYNztxucH8.BkLcoFxeKwOCRlP/DqWne7rzmJK5YDO', 'donor'),
+        ('Bob Torres',  'bob@example.com',     '$2y$10$gvck5Cwl.yI2ELMpE80U7.rp42D5jH5NdJHhkO1Ceh4HpTgEzfYkC', 'donor'),
+        ('Carol White', 'carol@example.com',   '$2y$10$jyNQtHBAXhYcrfij/P/J7uH5LhTfIZIi0cffLmXrLrDH8/8JJvNpK', 'donor'),
+        ('Admin',       'admin@unityfund.com', '$2y$10$U0imT1oxpZ8kc7oSTL1im.rkLwbVjZ7FlZFK6Rmiu4eDgO/uAClL6', 'admin'),
+        ('FundCreator', 'host@example.com',    '$2y$10$cUQvXVcTOGegTkW4A.9boOnCKClrOPJCMJEcxECT0LEVaQeoQ4TMW', 'organizer');
 END;
 GO
 
