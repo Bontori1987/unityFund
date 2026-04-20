@@ -44,9 +44,16 @@ try {
 
         $description = trim($input['description'] ?? '');
 
-        $conn->prepare(
-            "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category, Description) VALUES (?, ?, ?, ?, ?, ?)"
-        )->execute([$title, $goal, $userID, $status, $category, $description ?: null]);
+        // Try insert with Description; fall back without it if column doesn't exist yet
+        try {
+            $conn->prepare(
+                "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category, Description) VALUES (?, ?, ?, ?, ?, ?)"
+            )->execute([$title, $goal, $userID, $status, $category, $description ?: null]);
+        } catch (PDOException $e) {
+            $conn->prepare(
+                "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category) VALUES (?, ?, ?, ?, ?)"
+            )->execute([$title, $goal, $userID, $status, $category]);
+        }
 
         $idRow = $conn->query("SELECT SCOPE_IDENTITY() AS id")->fetch(PDO::FETCH_ASSOC);
         echo json_encode(['success' => true, 'camp_id' => (int)$idRow['id']]);
@@ -90,19 +97,35 @@ try {
         $sets[]   = 'Category = ?';
         $params[] = $cat;
     }
+    // Description handled separately — skipped silently if column doesn't exist
+    $descSets = [];
     if (array_key_exists('description', $input)) {
-        $sets[]   = 'Description = ?';
-        $params[] = trim($input['description']) ?: null;
+        $descSets[]   = 'Description = ?';
+        $descParams[] = trim($input['description']) ?: null;
     }
 
-    if (empty($sets)) {
+    if (empty($sets) && empty($descSets)) {
         echo json_encode(['success' => false, 'error' => 'Nothing to update']);
         exit;
     }
 
-    $params[] = $campID;
-    $conn->prepare("UPDATE Campaigns SET " . implode(', ', $sets) . " WHERE CampID = ?")
-         ->execute($params);
+    // Update non-description fields
+    if (!empty($sets)) {
+        $p   = $params;
+        $p[] = $campID;
+        $conn->prepare("UPDATE Campaigns SET " . implode(', ', $sets) . " WHERE CampID = ?")
+             ->execute($p);
+    }
+
+    // Update description separately — gracefully skipped if column missing
+    if (!empty($descSets)) {
+        try {
+            $p   = $descParams;
+            $p[] = $campID;
+            $conn->prepare("UPDATE Campaigns SET Description = ? WHERE CampID = ?")
+                 ->execute($p);
+        } catch (PDOException $e) { /* column doesn't exist yet — ignore */ }
+    }
 
     echo json_encode(['success' => true]);
 

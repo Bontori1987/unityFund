@@ -4,7 +4,8 @@ require_once 'db.php';
 
 if (isLoggedIn()) {
     $r = currentRole();
-    header('Location: ' . ($r === 'organizer' || $r === 'admin' ? 'my_campaigns.php' : 'donate.php'));
+    if ($r === 'admin' || $r === 'organizer') header('Location: my_campaigns.php');
+    else header('Location: index.php');
     exit;
 }
 
@@ -35,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } elseif (in_array($user['Role'], ['organizer', 'admin'])) {
                     header('Location: my_campaigns.php');
                 } else {
-                    header('Location: donate.php');
+                    header('Location: index.php');
                 }
                 exit;
             } elseif ($user && str_starts_with($user['Password'], '$2y$10$samplehash')) {

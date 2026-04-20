@@ -28,29 +28,29 @@ if ($isAdmin) {
 try {
     if ($isAdmin) {
         $stmt = $conn->query(
-            "SELECT c.CampID, c.Title, c.Description, c.GoalAmt, c.Status, c.Category, c.CreatedAt,
-                    u.Username AS HostName,
+            "SELECT c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt,
+                    COALESCE(u.Username, 'Unknown') AS HostName,
                     COALESCE(SUM(d.Amt), 0)   AS TotalRaised,
                     COUNT(DISTINCT d.ID)       AS DonationCount,
                     COUNT(DISTINCT d.DonorID)  AS DonorCount
              FROM Campaigns c
-             JOIN Users u ON c.HostID = u.UserID
+             LEFT JOIN Users u ON c.HostID = u.UserID
              LEFT JOIN Donations d ON d.CampID = c.CampID
-             GROUP BY c.CampID, c.Title, c.Description, c.GoalAmt, c.Status, c.Category, c.CreatedAt, u.Username
+             GROUP BY c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt, u.Username
              ORDER BY
                CASE c.Status WHEN 'pending' THEN 0 WHEN 'active' THEN 1 ELSE 2 END,
                c.CreatedAt DESC"
         );
     } else {
         $stmt = $conn->prepare(
-            "SELECT c.CampID, c.Title, c.Description, c.GoalAmt, c.Status, c.Category, c.CreatedAt,
+            "SELECT c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt,
                     COALESCE(SUM(d.Amt), 0)   AS TotalRaised,
                     COUNT(DISTINCT d.ID)       AS DonationCount,
                     COUNT(DISTINCT d.DonorID)  AS DonorCount
              FROM Campaigns c
              LEFT JOIN Donations d ON d.CampID = c.CampID
              WHERE c.HostID = ?
-             GROUP BY c.CampID, c.Title, c.Description, c.GoalAmt, c.Status, c.Category, c.CreatedAt
+             GROUP BY c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt
              ORDER BY c.CreatedAt DESC"
         );
         $stmt->execute([$userID]);
@@ -60,6 +60,20 @@ try {
     $campaigns = [];
     $dbError   = $e->getMessage();
 }
+
+// Fetch descriptions separately — gracefully skipped if column doesn't exist yet
+$descriptions = [];
+try {
+    $ids = array_column($campaigns, 'CampID');
+    if (!empty($ids)) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $dStmt = $conn->prepare("SELECT CampID, Description FROM Campaigns WHERE CampID IN ($placeholders)");
+        $dStmt->execute($ids);
+        foreach ($dStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $descriptions[$row['CampID']] = $row['Description'] ?? '';
+        }
+    }
+} catch (PDOException $e) { /* column doesn't exist yet — edit form shows empty textarea */ }
 
 $pageTitle = $isAdmin ? 'Manage Campaigns' : 'My Campaigns';
 require_once 'includes/header.php';
@@ -305,7 +319,7 @@ require_once 'includes/header.php';
                             <label class="form-label small fw-semibold">
                                 Description <span class="text-muted fw-normal">(optional)</span>
                             </label>
-                            <textarea name="description" class="form-control" rows="3"><?= htmlspecialchars($c['Description'] ?? '') ?></textarea>
+                            <textarea name="description" class="form-control" rows="3"><?= htmlspecialchars($descriptions[$c['CampID']] ?? '') ?></textarea>
                         </div>
                         <?php if ($isAdmin): ?>
                         <div class="col-md-2">
