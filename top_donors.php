@@ -6,7 +6,7 @@ require_once 'db.php';
 
 try {
     $stmt = $conn->query(
-        "SELECT TOP 10 UserID, Username, TotalDonated, DonationCount, LastDonation, OverallRank
+        "SELECT TOP 100 UserID, Username, TotalDonated, DonationCount, LastDonation, OverallRank
          FROM vw_TopDonors ORDER BY OverallRank"
     );
     $topDonors = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -17,7 +17,7 @@ try {
 
 try {
     $stmt2 = $conn->query(
-        "SELECT CampID, CampaignTitle, DonorName, Amt, RankInCampaign
+        "SELECT CampID, CampaignTitle, DonorID, DonorName, Amt, RankInCampaign
          FROM vw_DonationRunningTotal
          WHERE RankInCampaign <= 3
          ORDER BY CampID, RankInCampaign"
@@ -65,7 +65,12 @@ require_once 'includes/header.php';
         ?>
         <div class="podium-item rank-<?= $r ?>">
             <div style="font-size:2.2rem;"><?= $medals[(string)$r] ?? '#'.$r ?></div>
-            <div class="fw-bold mt-2"><?= htmlspecialchars($d['Username']) ?></div>
+            <div class="fw-bold mt-2">
+                <a href="profile.php?id=<?= $d['UserID'] ?>"
+                   class="text-dark text-decoration-none">
+                    <?= htmlspecialchars($d['Username']) ?>
+                </a>
+            </div>
             <div class="text-success fw-bold fs-5 mt-1">$<?= number_format($d['TotalDonated'], 2) ?></div>
             <div class="text-muted small mt-1">
                 <?= $d['DonationCount'] ?> donation<?= $d['DonationCount'] != 1 ? 's' : '' ?>
@@ -98,7 +103,12 @@ require_once 'includes/header.php';
                         <?php foreach ($rest as $d): ?>
                         <tr>
                             <td><strong>#<?= $d['OverallRank'] ?></strong></td>
-                            <td><?= htmlspecialchars($d['Username']) ?></td>
+                            <td>
+                                <a href="profile.php?id=<?= $d['UserID'] ?>"
+                                   class="text-success text-decoration-none fw-semibold">
+                                    <?= htmlspecialchars($d['Username']) ?>
+                                </a>
+                            </td>
                             <td><strong class="text-success">$<?= number_format($d['TotalDonated'], 2) ?></strong></td>
                             <td><?= $d['DonationCount'] ?></td>
                             <td class="text-muted small"><?= date('M j, Y', strtotime($d['LastDonation'])) ?></td>
@@ -130,7 +140,16 @@ require_once 'includes/header.php';
                         <?php foreach ($rows as $r): ?>
                         <tr>
                             <td><?= $medals[(string)$r['RankInCampaign']] ?? '#'.$r['RankInCampaign'] ?></td>
-                            <td><?= htmlspecialchars($r['DonorName']) ?></td>
+                            <td>
+                                <?php if ($r['DonorID']): ?>
+                                    <a href="profile.php?id=<?= $r['DonorID'] ?>"
+                                       class="text-success text-decoration-none fw-semibold">
+                                        <?= htmlspecialchars($r['DonorName']) ?>
+                                    </a>
+                                <?php else: ?>
+                                    <span class="text-muted"><?= htmlspecialchars($r['DonorName']) ?></span>
+                                <?php endif; ?>
+                            </td>
                             <td class="fw-semibold text-success">$<?= number_format($r['Amt'], 2) ?></td>
                         </tr>
                         <?php endforeach; ?>

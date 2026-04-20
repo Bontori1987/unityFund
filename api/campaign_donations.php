@@ -29,10 +29,14 @@ try {
         }
     }
 
+    // Admins see real names even if anonymous; others see masked names
+    $isAdminReq = isAdmin();
     $stmt = $conn->prepare(
         "SELECT
             d.ID,
-            CASE WHEN d.IsAnonymous = 1 THEN 'Anonymous' ELSE u.Username END AS DonorName,
+            u.UserID                                                               AS DonorID,
+            u.Username                                                             AS DonorName,
+            CASE WHEN d.IsAnonymous = 1 OR u.IsAnonymous = 1 THEN 1 ELSE 0 END   AS IsAnonymous,
             d.Amt,
             CONVERT(VARCHAR, d.Time, 107) AS Time,
             CASE WHEN r.ID IS NOT NULL THEN 1 ELSE 0 END AS HasReceipt
@@ -43,9 +47,18 @@ try {
          ORDER BY d.Time DESC"
     );
     $stmt->execute([$campID]);
-    $donations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    echo json_encode(['success' => true, 'donations' => $donations]);
+    // Non-admins: mask anonymous donors
+    $donations = array_map(function($d) use ($isAdminReq) {
+        if (!$isAdminReq && $d['IsAnonymous']) {
+            $d['DonorID']   = null;
+            $d['DonorName'] = 'Anonymous';
+        }
+        return $d;
+    }, $rows);
+
+    echo json_encode(['success' => true, 'donations' => $donations, 'isAdmin' => $isAdminReq]);
 
 } catch (PDOException $e) {
     http_response_code(500);

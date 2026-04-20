@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth.php';
 require_once 'db.php';
+require_once 'includes/mongo.php';
 
 if (isLoggedIn()) {
     header('Location: donate.php');
@@ -37,6 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $conn->prepare(
                     "INSERT INTO Users (Username, Email, Password, Role) VALUES (?, ?, ?, ?)"
                 )->execute([$username, $email, $hash, $dbRole]);
+
+                // Get new user ID and seed MongoDB profile
+                $newId = (int)$conn->query("SELECT SCOPE_IDENTITY() AS id")->fetchColumn();
+                if ($newId > 0) seedProfile($newId);
 
                 $success = $wantsOrganizer
                     ? 'Application submitted! An admin will review your organizer request. You can log in and donate while waiting.'

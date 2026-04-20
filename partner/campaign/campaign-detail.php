@@ -11,6 +11,7 @@ if ($id <= 0) { header('Location: ../../index.php'); exit; }
 try {
     $stmt = $conn->prepare(
         "SELECT c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt,
+                c.HostID,
                 COALESCE(u.Username, 'Unknown') AS HostName,
                 COALESCE(SUM(d.Amt), 0)   AS TotalRaised,
                 COUNT(DISTINCT d.DonorID) AS DonorCount
@@ -18,7 +19,7 @@ try {
          LEFT JOIN Users u ON c.HostID = u.UserID
          LEFT JOIN Donations d ON d.CampID = c.CampID
          WHERE c.CampID = ?
-         GROUP BY c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt, u.Username"
+         GROUP BY c.CampID, c.Title, c.GoalAmt, c.Status, c.Category, c.CreatedAt, c.HostID, u.Username"
     );
     $stmt->execute([$id]);
     $campaign = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -36,6 +37,19 @@ if (!$campaign) {
 $raised = (float)$campaign['TotalRaised'];
 $goal   = (float)$campaign['GoalAmt'];
 $pct    = $goal > 0 ? min(($raised / $goal) * 100, 100) : 0;
+
+// Running total over time — window function via view, chronological order
+$donations = [];
+try {
+    $dStmt = $conn->prepare(
+        "SELECT DonorID, DonorName, Amt, Time, RunningTotal, RankInCampaign
+         FROM vw_DonationRunningTotal
+         WHERE CampID = ?
+         ORDER BY Time ASC"
+    );
+    $dStmt->execute([$id]);
+    $donations = $dStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) { /* view may not exist yet */ }
 
 $categoryIcons = [
     'Technology'  => 'bi-cpu',
@@ -77,7 +91,16 @@ require_once '../../includes/header.php';
                 <span class="badge bg-success bg-opacity-10 text-success fw-semibold">
                     <i class="bi <?= $icon ?> me-1"></i><?= htmlspecialchars($campaign['Category']) ?>
                 </span>
-                <span class="text-muted small">by <?= htmlspecialchars($campaign['HostName']) ?></span>
+                <span class="text-muted small">by
+                    <?php if ($campaign['HostID']): ?>
+                        <a href="../../profile.php?id=<?= $campaign['HostID'] ?>"
+                           class="text-success text-decoration-none fw-semibold">
+                            <?= htmlspecialchars($campaign['HostName']) ?>
+                        </a>
+                    <?php else: ?>
+                        <?= htmlspecialchars($campaign['HostName']) ?>
+                    <?php endif; ?>
+                </span>
                 <span class="text-muted small">·</span>
                 <span class="text-muted small">
                     Started <?= date('M j, Y', strtotime($campaign['CreatedAt'])) ?>
@@ -103,6 +126,82 @@ require_once '../../includes/header.php';
                     <?php endif; ?>
                 </div>
             </div>
+
+            <!-- Donation activity — running total over time -->
+            <?php if (!empty($donations)): ?>
+            <div class="card mt-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h5 class="fw-bold mb-0">Funding over time</h5>
+                        <span class="badge bg-success bg-opacity-10 text-success small">
+                            <?= count($donations) ?> donation<?= count($donations) != 1 ? 's' : '' ?>
+                        </span>
+                    </div>
+                    <p class="text-muted small mb-4">
+                        Each bar shows cumulative total raised after that donation
+                        <code>SUM() OVER (PARTITION BY CampID ORDER BY Time)</code>
+                    </p>
+
+                    <?php
+                    // Each bar width = RunningTotal / GoalAmt — shows progress toward goal over time
+                    $barMax = $goal > 0 ? $goal : (float)end($donations)['RunningTotal'];
+                    reset($donations);
+                    ?>
+                    <div class="d-flex flex-column gap-2">
+                    <?php foreach ($donations as $i => $row):
+                        $pctOfGoal  = $barMax > 0 ? min(($row['RunningTotal'] / $barMax) * 100, 100) : 0;
+                        $prevTotal  = $i > 0 ? (float)$donations[$i-1]['RunningTotal'] : 0;
+                        $isLatest   = $i === count($donations) - 1;
+                    ?>
+                        <div>
+                            <div class="d-flex justify-content-between align-items-center mb-1"
+                                 style="font-size:.82rem;">
+                                <span class="text-muted">
+                                    <?= date('M j, Y', strtotime($row['Time'])) ?>
+                                    <span class="ms-1 fw-semibold">
+                                        <?php if ($row['DonorID']): ?>
+                                            <a href="../../profile.php?id=<?= $row['DonorID'] ?>"
+                                               class="text-success text-decoration-none">
+                                                <?= htmlspecialchars($row['DonorName']) ?>
+                                            </a>
+                                        <?php else: ?>
+                                            <span class="text-muted"><?= htmlspecialchars($row['DonorName']) ?></span>
+                                        <?php endif; ?>
+                                    </span>
+                                    <span class="text-success ms-1">
+                                        +$<?= number_format($row['Amt'], 0) ?>
+                                    </span>
+                                </span>
+                                <span class="fw-bold <?= $isLatest ? 'text-success' : 'text-dark' ?>">
+                                    $<?= number_format($row['RunningTotal'], 0) ?>
+                                    <?php if ($goal > 0): ?>
+                                    <span class="text-muted fw-normal">
+                                        (<?= number_format($pctOfGoal, 0) ?>%)
+                                    </span>
+                                    <?php endif; ?>
+                                </span>
+                            </div>
+                            <div style="background:#e9ecef;border-radius:4px;height:10px;overflow:hidden;">
+                                <div style="width:<?= number_format($pctOfGoal, 2) ?>%;
+                                            height:100%;border-radius:4px;
+                                            background:<?= $isLatest ? '#198754' : '#6aaa85' ?>;
+                                            transition:width .5s ease;">
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                    </div>
+
+                    <?php if ($goal > 0): ?>
+                    <div class="d-flex justify-content-between text-muted mt-2" style="font-size:.78rem;">
+                        <span>$0</span>
+                        <span>Goal: $<?= number_format($goal, 0) ?></span>
+                    </div>
+                    <?php endif; ?>
+
+                </div>
+            </div>
+            <?php endif; ?>
 
         </div>
 

@@ -8,6 +8,18 @@ $pageTitle = $pageTitle ?? 'UnityFund';
 $_h_user  = isLoggedIn() ? currentUser() : null;
 $_h_role  = $_h_user['role'] ?? 'guest';
 
+// Load MongoDB profile for avatar + unread count (silently skip if Mongo unavailable)
+$_h_avatar  = '';
+$_h_unread  = 0;
+if ($_h_user) {
+    try {
+        if (!function_exists('getProfile')) require_once __DIR__ . '/mongo.php';
+        $_h_profile = getProfile((int)$_h_user['id']);
+        $_h_avatar  = $_h_profile['avatar_url'] ?? '';
+        $_h_unread  = countUnreadNotifications((int)$_h_user['id']);
+    } catch (Exception $e) {}
+}
+
 $_roleBadge = [
     'donor'             => ['bg-primary',          'Donor'],
     'pending_organizer' => ['bg-warning text-dark', 'Pending'],
@@ -60,10 +72,6 @@ function _nav_active(string $file, string $cur): string {
                         <i class="bi bi-trophy me-1"></i>Top Donors
                     </a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link <?= _nav_active('running_total.php', $_cur) ?>"
-                       href="<?= $basePath ?>running_total.php">Progress</a>
-                </li>
             </ul>
 
             <div class="d-flex align-items-center gap-2">
@@ -77,10 +85,29 @@ function _nav_active(string $file, string $cur): string {
                     </a>
                     <?php endif; ?>
 
+                    <!-- Inbox bell -->
+                    <a href="<?= $basePath ?>inbox.php"
+                       class="btn btn-light btn-sm border position-relative"
+                       title="Inbox"
+                       style="width:34px;height:34px;padding:0;display:flex;align-items:center;justify-content:center;">
+                        <i class="bi bi-bell text-muted" style="font-size:1rem;"></i>
+                        <?php if ($_h_unread > 0): ?>
+                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger"
+                              style="font-size:.55rem;padding:2px 5px;">
+                            <?= $_h_unread > 99 ? '99+' : $_h_unread ?>
+                        </span>
+                        <?php endif; ?>
+                    </a>
+
                     <div class="dropdown">
                         <button class="btn btn-light btn-sm dropdown-toggle d-flex align-items-center gap-2 border"
                                 data-bs-toggle="dropdown" aria-expanded="false">
-                            <i class="bi bi-person-circle text-muted"></i>
+                            <?php if ($_h_avatar): ?>
+                                <img src="<?= htmlspecialchars($_h_avatar) ?>" alt="avatar"
+                                     class="rounded-circle" style="width:22px;height:22px;object-fit:cover;">
+                            <?php else: ?>
+                                <i class="bi bi-person-circle text-muted"></i>
+                            <?php endif; ?>
                             <span class="d-none d-sm-inline">
                                 <?= htmlspecialchars($_h_user['username']) ?>
                             </span>
@@ -117,6 +144,24 @@ function _nav_active(string $file, string $cur): string {
                                 </span>
                             </li>
                             <?php endif; ?>
+                            <li>
+                                <a class="dropdown-item py-2" href="<?= $basePath ?>profile.php">
+                                    <i class="bi bi-person me-2 text-muted"></i>My Profile
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item py-2 d-flex align-items-center justify-content-between"
+                                   href="<?= $basePath ?>inbox.php">
+                                    <span>
+                                        <i class="bi bi-bell me-2 text-muted"></i>Inbox
+                                    </span>
+                                    <?php if ($_h_unread > 0): ?>
+                                    <span class="badge bg-danger rounded-pill" style="font-size:.6rem;">
+                                        <?= $_h_unread > 99 ? '99+' : $_h_unread ?>
+                                    </span>
+                                    <?php endif; ?>
+                                </a>
+                            </li>
                             <li><hr class="dropdown-divider my-1"></li>
                             <li>
                                 <a class="dropdown-item py-2 text-danger" href="<?= $basePath ?>logout.php">

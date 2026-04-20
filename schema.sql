@@ -7,12 +7,13 @@ GO
 -- Users
 IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
 CREATE TABLE Users (
-    UserID    INT           PRIMARY KEY IDENTITY(1,1),
-    Username  NVARCHAR(100) NOT NULL,
-    Email     NVARCHAR(255) NOT NULL UNIQUE,
-    Password  NVARCHAR(255) NOT NULL,            -- bcrypt hash
-    Role      NVARCHAR(20)  NOT NULL DEFAULT 'donor',
-    CreatedAt DATETIME      NOT NULL DEFAULT GETDATE()
+    UserID      INT           PRIMARY KEY IDENTITY(1,1),
+    Username    NVARCHAR(100) NOT NULL,
+    Email       NVARCHAR(255) NOT NULL UNIQUE,
+    Password    NVARCHAR(255) NOT NULL,            -- bcrypt hash
+    Role        NVARCHAR(20)  NOT NULL DEFAULT 'donor',
+    IsAnonymous BIT           NOT NULL DEFAULT 0,  -- user-level anonymous mode
+    CreatedAt   DATETIME      NOT NULL DEFAULT GETDATE()
 );
 GO
 
@@ -95,7 +96,10 @@ SELECT
     d.ID,
     d.CampID,
     c.Title AS CampaignTitle,
-    CASE WHEN d.IsAnonymous = 1 THEN 'Anonymous'
+    CASE WHEN d.IsAnonymous = 1 OR u.IsAnonymous = 1 THEN NULL
+         ELSE d.DonorID
+    END     AS DonorID,
+    CASE WHEN d.IsAnonymous = 1 OR u.IsAnonymous = 1 THEN 'Anonymous'
          ELSE u.Username
     END     AS DonorName,
     d.Amt,
@@ -133,7 +137,7 @@ WITH DonorTotals AS (
         MAX(d.Time) AS LastDonation
     FROM Donations d
     JOIN Users u ON d.DonorID = u.UserID
-    WHERE d.IsAnonymous = 0
+    WHERE d.IsAnonymous = 0 AND u.IsAnonymous = 0
     GROUP BY u.UserID, u.Username
 )
 SELECT
@@ -161,6 +165,13 @@ END;
 GO
 
 -- Migrations: safe to run on existing DB
+IF NOT EXISTS (
+    SELECT 1 FROM sys.columns
+    WHERE object_id = OBJECT_ID('Users') AND name = 'IsAnonymous'
+)
+    ALTER TABLE Users ADD IsAnonymous BIT NOT NULL DEFAULT 0;
+GO
+
 IF NOT EXISTS (
     SELECT 1 FROM sys.columns
     WHERE object_id = OBJECT_ID('Campaigns') AND name = 'Category'

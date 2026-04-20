@@ -1,5 +1,6 @@
 # ── Credentials & environment ──────────────────────────────────
 db.php
+includes/mongo.php
 .env
 *.env
 
@@ -7,6 +8,16 @@ db.php
 dev_login.php
 setup_test_accounts.php
 debug_login.php
+test_mongo.php
+
+# ── Deprecated / removed pages ──────────────────────────────────
+running_total.php
+
+# ── MongoDB seed data (local only) ──────────────────────────────
+mongo_seed/
+
+# ── MongoDB setup (run once locally) ────────────────────────────
+schema_mongo.php
 
 # ── OS ──────────────────────────────────────────────────────────
 .DS_Store
@@ -32,6 +43,8 @@ php_errors.log
 # ── Uploads (keep folder, not files) ────────────────────────────
 assets/uploads/*
 !assets/uploads/.gitkeep
+assets/uploads/avatars/*
+!assets/uploads/avatars/.gitkeep
 
 # ── XAMPP / local server ─────────────────────────────────────────
 nbproject/
