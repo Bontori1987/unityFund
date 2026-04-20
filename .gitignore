@@ -1,0 +1,38 @@
+# ── Credentials & environment ──────────────────────────────────
+db.php
+.env
+*.env
+
+# ── Dev-only tools ──────────────────────────────────────────────
+dev_login.php
+setup_test_accounts.php
+debug_login.php
+
+# ── OS ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── IDE / editors ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── PHP ─────────────────────────────────────────────────────────
+vendor/
+composer.lock
+
+# ── Logs ────────────────────────────────────────────────────────
+*.log
+error_log
+php_errors.log
+
+# ── Uploads (keep folder, not files) ────────────────────────────
+assets/uploads/*
+!assets/uploads/.gitkeep
+
+# ── XAMPP / local server ─────────────────────────────────────────
+nbproject/
+.htaccess.bak

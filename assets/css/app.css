@@ -1,0 +1,121 @@
+/* UnityFund — app.css  (supplements Bootstrap 5) */
+
+/* ── Brand / colour overrides ─────────────────────────────────── */
+:root {
+    --uf-green:      #02a95c;
+    --uf-green-dark: #028a4c;
+    --uf-green-light:#e6f7ef;
+    --uf-text:       #1a1a1a;
+    --uf-muted:      #6c757d;
+    --uf-border:     #e5e7eb;
+    --uf-radius:     12px;
+}
+
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--uf-text);
+    background: #f8f9fa;
+}
+
+/* Bootstrap success override → brand green */
+.btn-success             { background-color: var(--uf-green);  border-color: var(--uf-green); }
+.btn-success:hover       { background-color: var(--uf-green-dark); border-color: var(--uf-green-dark); }
+.btn-outline-success     { color: var(--uf-green); border-color: var(--uf-green); }
+.btn-outline-success:hover { background-color: var(--uf-green); border-color: var(--uf-green); color:#fff; }
+.text-success            { color: var(--uf-green) !important; }
+.bg-success              { background-color: var(--uf-green) !important; }
+.progress-bar.bg-success { background-color: var(--uf-green) !important; }
+.badge.bg-success        { background-color: var(--uf-green) !important; }
+
+/* Organizer purple (not in Bootstrap) */
+.bg-purple   { background-color: #6f42c1 !important; }
+.text-purple { color: #6f42c1 !important; }
+
+/* ── Navbar ────────────────────────────────────────────────────── */
+.navbar { box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+.navbar-brand { font-size: 1.3rem; letter-spacing: -.3px; }
+.nav-link { color: #444; font-size: .92rem; padding: .4rem .6rem !important; border-radius: 6px; }
+.nav-link:hover, .nav-link.active { color: var(--uf-green); background: var(--uf-green-light); }
+
+/* ── Cards ─────────────────────────────────────────────────────── */
+.card { border: 1px solid var(--uf-border); border-radius: var(--uf-radius); }
+.card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.09); }
+
+/* Campaign cards */
+.campaign-card { transition: transform .15s, box-shadow .15s; cursor: pointer; }
+.campaign-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.10); }
+.campaign-card .card-img-top {
+    height: 200px;
+    object-fit: cover;
+    background: #e9ecef;
+}
+.campaign-card .img-placeholder {
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+    background: linear-gradient(135deg, #e6f7ef, #d4edda);
+    border-radius: var(--uf-radius) var(--uf-radius) 0 0;
+}
+
+/* ── Progress bar ──────────────────────────────────────────────── */
+.progress { border-radius: 99px; background: #e9ecef; }
+.progress-bar { border-radius: 99px; transition: width .5s ease; }
+
+/* ── Auth pages ────────────────────────────────────────────────── */
+.auth-page { min-height: 100vh; background: #f0faf5; display: flex; align-items: center; justify-content: center; padding: 2rem 1rem; }
+.auth-card { background: #fff; border-radius: 16px; box-shadow: 0 4px 32px rgba(0,0,0,.10); padding: 2.5rem 2rem; width: 100%; max-width: 440px; }
+.auth-logo { text-align: center; margin-bottom: 2rem; }
+.auth-logo .brand { font-size: 1.8rem; font-weight: 700; color: var(--uf-green); }
+
+/* Role picker (register) */
+.role-option input[type=radio] { display: none; }
+.role-option label {
+    display: block; text-align: center; padding: .85rem 1rem;
+    border: 2px solid var(--uf-border); border-radius: 10px;
+    cursor: pointer; font-weight: 600; transition: all .15s;
+}
+.role-option input:checked + label { border-color: var(--uf-green); background: var(--uf-green-light); color: var(--uf-green-dark); }
+.role-option label span { display: block; font-size: 1.6rem; margin-bottom: .3rem; }
+
+/* ── Tables ─────────────────────────────────────────────────────── */
+.table { font-size: .9rem; }
+.table thead th { background: #f8f9fa; border-bottom: 2px solid var(--uf-border); font-weight: 600; font-size: .8rem; letter-spacing: .4px; text-transform: uppercase; color: var(--uf-muted); }
+
+/* ── Podium (top donors) ──────────────────────────────────────── */
+.podium-wrap { display: flex; justify-content: center; align-items: flex-end; gap: 1rem; }
+.podium-item { text-align: center; padding: 1.2rem 1rem; border-radius: var(--uf-radius); background: #fff; border: 2px solid var(--uf-border); min-width: 140px; flex: 1; max-width: 180px; }
+.podium-item.rank-1 { transform: translateY(-12px); border-color: #ffc107; background: #fffdf0; }
+.podium-item.rank-2 { border-color: #adb5bd; background: #f8f9fa; }
+.podium-item.rank-3 { border-color: #fd7e14; background: #fff8f0; }
+
+/* ── Hero ──────────────────────────────────────────────────────── */
+.hero-section { background: linear-gradient(135deg, #f0faf5 0%, #e8f5e9 100%); }
+
+/* ── Stats bar ─────────────────────────────────────────────────── */
+.stats-bar { background: var(--uf-green); color: #fff; }
+.stats-bar .stat-val { font-size: 1.75rem; font-weight: 700; }
+.stats-bar .stat-lbl { font-size: .8rem; opacity: .85; }
+
+/* ── Donate page ───────────────────────────────────────────────── */
+.amount-preset { border: 2px solid var(--uf-border); background: #fff; color: var(--uf-text); border-radius: 8px; padding: .45rem 1rem; font-weight: 600; cursor: pointer; transition: all .15s; }
+.amount-preset:hover, .amount-preset.active { border-color: var(--uf-green); background: var(--uf-green-light); color: var(--uf-green-dark); }
+
+/* ── Admin/Organizer dashboard ─────────────────────────────────── */
+.camp-status-active  { color: var(--uf-green);  background: var(--uf-green-light); }
+.camp-status-pending { color: #e65100; background: #fff3e0; }
+.camp-status-closed  { color: #6c757d; background: #f8f9fa; }
+.status-pill { display: inline-block; padding: .2rem .7rem; border-radius: 99px; font-size: .78rem; font-weight: 600; }
+
+/* ── Misc ──────────────────────────────────────────────────────── */
+.section-title { font-size: .72rem; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--uf-muted); margin-bottom: .75rem; }
+.empty-state { text-align: center; color: var(--uf-muted); padding: 3rem 1rem; }
+.empty-state i { font-size: 2.5rem; display: block; margin-bottom: .75rem; opacity: .4; }
+.panel-body { display: none; }
+.panel-body.open { display: block; }
+
+@media (max-width: 576px) {
+    .podium-wrap { flex-direction: column; align-items: center; }
+    .podium-item { max-width: 100%; transform: none !important; }
+}
