@@ -13,9 +13,9 @@ $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username       = trim($_POST['username'] ?? '');
-    $email          = trim($_POST['email']    ?? '');
-    $password       = $_POST['password']      ?? '';
-    $confirm        = $_POST['confirm']       ?? '';
+    $email          = trim($_POST['email'] ?? '');
+    $password       = $_POST['password'] ?? '';
+    $confirm        = $_POST['confirm'] ?? '';
     $wantsOrganizer = (($_POST['role'] ?? 'donor') === 'organizer');
     $dbRole         = 'donor';
 
@@ -39,9 +39,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     "INSERT INTO Users (Username, Email, Password, Role, CreatedAt) VALUES (?, ?, ?, ?, ?)"
                 )->execute([$username, $email, $hash, $dbRole, sqlNow()]);
 
-                // Get new user ID and seed MongoDB profile
                 $newId = (int)$conn->query("SELECT SCOPE_IDENTITY() AS id")->fetchColumn();
-                if ($newId > 0) seedProfile($newId);
+                if ($newId > 0) {
+                    seedProfile($newId);
+                }
 
                 $success = $wantsOrganizer
                     ? 'Account created! Sign in, then complete the organizer application form for admin review.'
@@ -58,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register — UnityFund</title>
+    <title>Register - UnityFund</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -90,7 +91,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php if (!$success): ?>
         <form method="POST">
 
-            <!-- Role picker -->
             <div class="mb-3">
                 <label class="form-label fw-semibold small">Account type</label>
                 <div class="d-flex gap-2">
@@ -164,7 +164,6 @@ document.querySelectorAll('input[name=role]').forEach(r => {
             document.querySelector('input[name=role]:checked').value === 'organizer' ? 'block' : 'none';
     });
 });
-// Show on load if organizer pre-selected
 if (document.querySelector('input[name=role]:checked')?.value === 'organizer') {
     document.getElementById('org-notice').style.display = 'block';
 }
