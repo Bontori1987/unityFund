@@ -1,0 +1,53 @@
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    color: #222;
+}
+
+.rounded-top-4 {
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+}
+
+.btn-dark {
+    background-color: #02a95c;
+    border: none;
+}
+
+.btn-dark:hover {
+    background-color: #028a4c;
+}
+
+p{
+    line-heigh: 1.6;
+}
+
+.hero-contianer{
+    width: 100%;
+    height: 600px;
+    overflow: hidden;
+    position: relative;
+}
+
+.hero-contianer img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+}
+
+/* LAPTOP */
+@media (min-width: 1024px) {
+    body {
+        font-size: 18px; 
+        background-color: #f8f9fa;
+    }
+
+    .hero-contianer {
+        height: 500px; 
+    }
+}
