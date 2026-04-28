@@ -52,7 +52,8 @@ function _nav_active(string $file, string $cur): string {
         <a class="navbar-brand d-flex align-items-center gap-2"
            href="<?= $basePath ?>index.php">
             <img src="<?= $basePath ?>assets/logo.jpg" alt="UnityFund"
-                 style="height:108px;width:auto;border-radius:6px;object-fit:contain;">
+                 class="nav-logo"
+                 style="height:52px;width:auto;border-radius:6px;object-fit:contain;">
         </a>
 
         <button class="navbar-toggler border-0" type="button"
@@ -72,6 +73,14 @@ function _nav_active(string $file, string $cur): string {
                         <i class="bi bi-trophy me-1"></i>Top Donors
                     </a>
                 </li>
+                <?php if (isAdmin()): ?>
+                <li class="nav-item">
+                    <a class="nav-link <?= _nav_active('admin.php', $_cur) ?>"
+                       href="<?= $basePath ?>admin.php">
+                        <i class="bi bi-speedometer2 me-1"></i>Dashboard
+                    </a>
+                </li>
+                <?php endif; ?>
             </ul>
 
             <div class="d-flex align-items-center gap-2">
@@ -123,6 +132,12 @@ function _nav_active(string $file, string $cur): string {
                                 </a>
                             </li>
                             <li>
+                                <a class="dropdown-item py-2" href="<?= $basePath ?>transactions.php">
+                                    <i class="bi bi-clock-history me-2 text-muted"></i>
+                                    <?= isAdmin() ? 'All Transactions' : 'My Transactions' ?>
+                                </a>
+                            </li>
+                            <li>
                                 <a class="dropdown-item py-2" href="<?= $basePath ?>receipts.php">
                                     <i class="bi bi-receipt me-2 text-muted"></i>
                                     <?= isAdmin() ? 'All Receipts' : 'My Receipts' ?>
@@ -131,9 +146,9 @@ function _nav_active(string $file, string $cur): string {
                             <?php endif; ?>
                             <?php if (isOrganizer() || isAdmin()): ?>
                             <li>
-                                <a class="dropdown-item py-2" href="<?= $basePath ?>my_campaigns.php">
-                                    <i class="bi bi-grid me-2 text-muted"></i>
-                                    <?= isAdmin() ? 'Manage Campaigns' : 'My Campaigns' ?>
+                                <a class="dropdown-item py-2" href="<?= $basePath ?><?= isAdmin() ? 'admin.php' : 'my_campaigns.php' ?>">
+                                    <i class="bi <?= isAdmin() ? 'bi-speedometer2' : 'bi-grid' ?> me-2 text-muted"></i>
+                                    <?= isAdmin() ? 'Dashboard' : 'My Campaigns' ?>
                                 </a>
                             </li>
                             <?php endif; ?>
@@ -142,6 +157,13 @@ function _nav_active(string $file, string $cur): string {
                                 <span class="dropdown-item py-2 text-warning">
                                     <i class="bi bi-clock me-2"></i>Pending organizer approval
                                 </span>
+                            </li>
+                            <?php endif; ?>
+                            <?php if ($_h_role === 'donor'): ?>
+                            <li>
+                                <a class="dropdown-item py-2" href="<?= $basePath ?>apply_organizer.php">
+                                    <i class="bi bi-person-badge me-2 text-muted"></i>Apply as Organizer
+                                </a>
                             </li>
                             <?php endif; ?>
                             <li>

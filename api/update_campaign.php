@@ -10,7 +10,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-if (!isOrganizer()) {
+if (!isOrganizer() && !isAdmin()) {
     http_response_code(403);
     echo json_encode(['success' => false, 'error' => 'Access denied']);
     exit;
@@ -44,19 +44,22 @@ try {
 
         $description = trim($input['description'] ?? '');
 
-        // Try insert with Description; fall back without it if column doesn't exist yet
-        try {
-            $conn->prepare(
-                "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category, Description) VALUES (?, ?, ?, ?, ?, ?)"
-            )->execute([$title, $goal, $userID, $status, $category, $description ?: null]);
-        } catch (PDOException $e) {
-            $conn->prepare(
-                "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category) VALUES (?, ?, ?, ?, ?)"
-            )->execute([$title, $goal, $userID, $status, $category]);
+        $ins = $conn->prepare(
+            "INSERT INTO Campaigns (Title, GoalAmt, HostID, Status, Category, CreatedAt)
+             OUTPUT INSERTED.CampID
+             VALUES (?, ?, ?, ?, ?, ?)"
+        );
+        $ins->execute([$title, $goal, $userID, $status, $category, sqlNow()]);
+
+        $newCampId = (int)$ins->fetchColumn();
+
+        // Save description to MongoDB
+        if ($description !== '') {
+            if (!function_exists('saveCampaignDescription')) require_once '../includes/mongo.php';
+            saveCampaignDescription($newCampId, $description);
         }
 
-        $idRow = $conn->query("SELECT SCOPE_IDENTITY() AS id")->fetch(PDO::FETCH_ASSOC);
-        echo json_encode(['success' => true, 'camp_id' => (int)$idRow['id']]);
+        echo json_encode(['success' => true, 'camp_id' => $newCampId]);
         exit;
     }
 
@@ -97,19 +100,14 @@ try {
         $sets[]   = 'Category = ?';
         $params[] = $cat;
     }
-    // Description handled separately — skipped silently if column doesn't exist
-    $descSets = [];
-    if (array_key_exists('description', $input)) {
-        $descSets[]   = 'Description = ?';
-        $descParams[] = trim($input['description']) ?: null;
+    if (empty($sets)) {
+        // Allow description-only updates
+        if (!array_key_exists('description', $input)) {
+            echo json_encode(['success' => false, 'error' => 'Nothing to update']);
+            exit;
+        }
     }
 
-    if (empty($sets) && empty($descSets)) {
-        echo json_encode(['success' => false, 'error' => 'Nothing to update']);
-        exit;
-    }
-
-    // Update non-description fields
     if (!empty($sets)) {
         $p   = $params;
         $p[] = $campID;
@@ -117,14 +115,10 @@ try {
              ->execute($p);
     }
 
-    // Update description separately — gracefully skipped if column missing
-    if (!empty($descSets)) {
-        try {
-            $p   = $descParams;
-            $p[] = $campID;
-            $conn->prepare("UPDATE Campaigns SET Description = ? WHERE CampID = ?")
-                 ->execute($p);
-        } catch (PDOException $e) { /* column doesn't exist yet — ignore */ }
+    // Save description to MongoDB
+    if (array_key_exists('description', $input)) {
+        if (!function_exists('saveCampaignDescription')) require_once '../includes/mongo.php';
+        saveCampaignDescription($campID, (string)($input['description'] ?? ''));
     }
 
     echo json_encode(['success' => true]);

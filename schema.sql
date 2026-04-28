@@ -4,6 +4,9 @@
 USE UnityFindDB;
 GO
 
+-- SQL Server DATETIME has no timezone. Store app-local GMT+7 wall time.
+-- Equivalent to Asia/Ho_Chi_Minh for this project.
+
 -- Users
 IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Users' AND xtype='U')
 CREATE TABLE Users (
@@ -13,7 +16,7 @@ CREATE TABLE Users (
     Password    NVARCHAR(255) NOT NULL,            -- bcrypt hash
     Role        NVARCHAR(20)  NOT NULL DEFAULT 'donor',
     IsAnonymous BIT           NOT NULL DEFAULT 0,  -- user-level anonymous mode
-    CreatedAt   DATETIME      NOT NULL DEFAULT GETDATE()
+    CreatedAt   DATETIME      NOT NULL DEFAULT DATEADD(HOUR, 7, SYSUTCDATETIME())
 );
 GO
 
@@ -28,7 +31,7 @@ CREATE TABLE Campaigns (
     Status      NVARCHAR(20)    NOT NULL DEFAULT 'pending',
     Category    NVARCHAR(50)    NOT NULL DEFAULT 'Other',
     Description NVARCHAR(MAX)   NULL,
-    CreatedAt   DATETIME        NOT NULL DEFAULT GETDATE()
+    CreatedAt   DATETIME        NOT NULL DEFAULT DATEADD(HOUR, 7, SYSUTCDATETIME())
 );
 GO
 
@@ -39,7 +42,7 @@ CREATE TABLE Donations (
     CampID      INT           NOT NULL,
     DonorID     INT           NOT NULL,
     Amt         DECIMAL(10,2) NOT NULL CHECK (Amt > 0),
-    Time        DATETIME      NOT NULL DEFAULT GETDATE(),
+    Time        DATETIME      NOT NULL DEFAULT DATEADD(HOUR, 7, SYSUTCDATETIME()),
     Message     NVARCHAR(500) NULL,
     IsAnonymous BIT           NOT NULL DEFAULT 0,
     CONSTRAINT FK_Don_Camp  FOREIGN KEY (CampID)  REFERENCES Campaigns(CampID),
@@ -52,7 +55,7 @@ IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Receipts' AND xtype='U')
 CREATE TABLE Receipts (
     ID        INT           PRIMARY KEY IDENTITY(1,1),
     DonID     INT           NOT NULL UNIQUE,
-    IssuedAt  DATETIME      NOT NULL DEFAULT GETDATE(),
+    IssuedAt  DATETIME      NOT NULL DEFAULT DATEADD(HOUR, 7, SYSUTCDATETIME()),
     TaxAmount DECIMAL(10,2) NOT NULL,
     CONSTRAINT FK_Rec_Don FOREIGN KEY (DonID) REFERENCES Donations(ID)
 );
@@ -77,7 +80,7 @@ BEGIN
     INSERT INTO Receipts (DonID, IssuedAt, TaxAmount)
     SELECT
         i.ID,
-        GETDATE(),
+        DATEADD(HOUR, 7, SYSUTCDATETIME()),
         ROUND(i.Amt * 0.10, 2)
     FROM INSERTED i
     WHERE i.Amt > 50;
@@ -162,6 +165,24 @@ BEGIN
         ('Admin',       'admin@unityfund.com', '$2y$10$U0imT1oxpZ8kc7oSTL1im.rkLwbVjZ7FlZFK6Rmiu4eDgO/uAClL6', 'admin'),
         ('FundCreator', 'host@example.com',    '$2y$10$cUQvXVcTOGegTkW4A.9boOnCKClrOPJCMJEcxECT0LEVaQeoQ4TMW', 'organizer');
 END;
+GO
+
+-- ============================================================
+-- Transactions table — payment gateway middle layer
+-- ============================================================
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Transactions' AND xtype='U')
+CREATE TABLE Transactions (
+    TxID        INT            PRIMARY KEY IDENTITY(1,1),
+    UserID      INT            NOT NULL REFERENCES Users(UserID),
+    CampID      INT            NOT NULL REFERENCES Campaigns(CampID),
+    Amt         DECIMAL(10,2)  NOT NULL CHECK (Amt > 0),
+    Status      NVARCHAR(20)   NOT NULL DEFAULT 'pending',
+    -- 'pending' | 'success' | 'failed'
+    GatewayRef  NVARCHAR(255)  NULL,   -- Stripe PaymentIntent ID (pi_xxx)
+    FailReason  NVARCHAR(500)  NULL,
+    CreatedAt   DATETIME       NOT NULL DEFAULT GETDATE(),
+    ProcessedAt DATETIME       NULL
+);
 GO
 
 -- Migrations: safe to run on existing DB

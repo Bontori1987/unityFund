@@ -65,14 +65,25 @@ require_once 'includes/header.php';
 
             <!-- Progress (populated via JS) -->
             <div id="campaignProgress" class="mb-3" style="display:none;">
-                <div class="d-flex justify-content-between small text-muted mb-1">
-                    <span id="prog-raised"></span>
-                    <span id="prog-donors"></span>
+                <div class="d-flex align-items-center gap-3 mb-2">
+                    <img id="campaignThumb" src="" alt=""
+                         style="width:74px;height:54px;object-fit:cover;border-radius:6px;display:none;">
+                    <div class="flex-grow-1">
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span id="prog-raised"></span>
+                            <span id="prog-donors"></span>
+                        </div>
+                        <div class="progress" style="height:8px;">
+                            <div class="progress-bar bg-success" id="prog-bar" style="width:0%"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="progress" style="height:8px;">
-                    <div class="progress-bar bg-success" id="prog-bar" style="width:0%"></div>
+                <div class="d-flex justify-content-between align-items-center mt-1">
+                    <div class="small text-muted" id="prog-pct"></div>
+                    <a href="#" id="campaignLink" class="small text-success text-decoration-none fw-semibold">
+                        View campaign
+                    </a>
                 </div>
-                <div class="small text-muted mt-1" id="prog-pct"></div>
             </div>
 
             <!-- Amount -->
@@ -108,9 +119,21 @@ require_once 'includes/header.php';
                 </label>
             </div>
 
+            <!-- Card details (Stripe Elements) -->
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Card details</label>
+                <div id="card-element" class="form-control py-2" style="height:auto;min-height:42px;"></div>
+                <div id="card-errors" class="text-danger small mt-1" role="alert"></div>
+            </div>
+
             <button type="submit" id="submitBtn" class="btn btn-success w-100 fw-semibold py-2">
-                <i class="bi bi-heart me-1"></i>Donate now
+                <i class="bi bi-lock me-1"></i>Pay securely with Stripe
             </button>
+
+            <p class="text-center text-muted small mt-2 mb-0">
+                <i class="bi bi-shield-lock me-1"></i>
+                Card details never touch our server — processed by Stripe
+            </p>
         </form>
 
         <div id="resultMsg" class="mt-3" style="display:none;"></div>
@@ -119,7 +142,13 @@ require_once 'includes/header.php';
 
 </div>
 
-<?php if ($loggedIn && canDonate()): ?>
+<?php if ($loggedIn && canDonate()):
+    require_once 'includes/stripe.php';
+?>
+<script src="https://js.stripe.com/v3/"></script>
+<script>
+const STRIPE_PK = <?= json_encode(STRIPE_PUBLISHABLE_KEY) ?>;
+</script>
 <script>
 // Preset buttons
 document.querySelectorAll('.amount-preset').forEach(btn => {
@@ -157,6 +186,17 @@ document.getElementById('campaign').addEventListener('change', async function ()
                 `${data.donor_count} donor${data.donor_count !== 1 ? 's' : ''}`;
             document.getElementById('prog-bar').style.width = pct.toFixed(1) + '%';
             document.getElementById('prog-pct').textContent = pct.toFixed(1) + '% funded';
+            document.getElementById('campaignLink').href = `partner/campaign/campaign-detail.php?id=${encodeURIComponent(id)}`;
+            const thumb = document.getElementById('campaignThumb');
+            if (data.thumbnail) {
+                thumb.src = data.thumbnail;
+                thumb.alt = data.title || 'Campaign image';
+                thumb.style.display = '';
+            } else {
+                thumb.removeAttribute('src');
+                thumb.alt = '';
+                thumb.style.display = 'none';
+            }
             box.style.display = 'block';
         }
     } catch { box.style.display = 'none'; }
@@ -165,7 +205,21 @@ document.getElementById('campaign').addEventListener('change', async function ()
 if (document.getElementById('campaign').value)
     document.getElementById('campaign').dispatchEvent(new Event('change'));
 
-// Submit
+// ── Stripe setup ─────────────────────────────────────────────────────────────
+const stripe      = Stripe(STRIPE_PK);
+const elements    = stripe.elements();
+const cardElement = elements.create('card', {
+    style: {
+        base:    { fontFamily: 'Inter, sans-serif', fontSize: '15px', color: '#212529' },
+        invalid: { color: '#dc3545' }
+    }
+});
+cardElement.mount('#card-element');
+cardElement.on('change', e => {
+    document.getElementById('card-errors').textContent = e.error ? e.error.message : '';
+});
+
+// ── Submit ────────────────────────────────────────────────────────────────────
 document.getElementById('donationForm').addEventListener('submit', async function (e) {
     e.preventDefault();
     const campID  = document.getElementById('campaign').value;
@@ -175,40 +229,77 @@ document.getElementById('donationForm').addEventListener('submit', async functio
 
     if (!campID)       { showResult('error', 'Please select a campaign.'); return; }
     if (!(amount > 0)) { showResult('error', 'Please enter a valid amount greater than $0.'); return; }
+    if (!stripe)       { showResult('error', 'Payment system not loaded. Please refresh.'); return; }
 
     const btn = document.getElementById('submitBtn');
+    // Disable immediately — prevents multiple PaymentIntents on repeated clicks
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing…';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Creating payment…';
 
     try {
-        const data = await fetch('api/process_donation.php', {
+        // Step 1: Server creates PaymentIntent → get client_secret
+        // idempotency_key prevents duplicate intents if request is retried
+        const idempotencyKey = `donate-${campID}-${amount}-${Date.now()}`;
+        const intentData = await fetch('api/create_payment_intent.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ camp_id: campID, amount, message, anonymous: anon })
+            body: JSON.stringify({ camp_id: campID, amount, idempotency_key: idempotencyKey })
         }).then(r => r.json());
 
-        if (data.success) {
-            let html = `<div class="alert alert-success">
-                <h5 class="mb-1"><i class="bi bi-check-circle me-1"></i>Thank you!</h5>
-                <p class="mb-1">You donated <strong>$${amount.toFixed(2)}</strong> successfully.</p>`;
-            if (data.receipt_generated) {
-                html += `<p class="mb-0 small">A tax receipt was generated.
-                    <a href="receipts.php" class="alert-link">View receipts &rarr;</a></p>`;
-            }
-            html += `</div>`;
-            showResult('raw', html);
-            this.reset();
-            document.querySelectorAll('.amount-preset').forEach(b => b.classList.remove('active'));
-            document.getElementById('campaignProgress').style.display = 'none';
-        } else {
-            showResult('error', data.error || 'Donation failed. Please try again.');
+        if (!intentData.success) {
+            showResult('error', intentData.error || 'Could not initiate payment.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-lock me-1"></i>Pay securely with Stripe';
+            return;
         }
-    } catch {
+
+        // Step 2: Stripe.js confirms card with client_secret (card never hits our server)
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing card…';
+        const { paymentIntent, error } = await stripe.confirmCardPayment(
+            intentData.client_secret,
+            { payment_method: { card: cardElement } }
+        );
+
+        if (error) {
+            showResult('error', error.message || 'Card was declined.');
+            // Step 3a: Tell server it failed so Transaction row is updated
+            await fetch('api/confirm_payment.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ intent_id: intentData.intent_id, camp_id: campID, amount, failed: true })
+            });
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-lock me-1"></i>Pay securely with Stripe';
+            return;
+        }
+
+        // Step 3b: Server verifies PaymentIntent status directly with Stripe API
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verifying…';
+        const confirm = await fetch('api/confirm_payment.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                intent_id: paymentIntent.id,
+                camp_id:   campID,
+                amount,
+                message,
+                anonymous: anon
+            })
+        }).then(r => r.json());
+
+        if (confirm.success) {
+            // Redirect to banking-style receipt page
+            window.location.href = 'payment_success.php?ref=' + encodeURIComponent(paymentIntent.id);
+            return;
+        } else {
+            showResult('error', confirm.error || 'Payment could not be verified. Contact support with ref: ' + paymentIntent.id);
+        }
+    } catch (err) {
         showResult('error', 'Network error. Please try again.');
     }
 
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-heart me-1"></i>Donate now';
+    btn.innerHTML = '<i class="bi bi-lock me-1"></i>Pay securely with Stripe';
 });
 
 function showResult(type, msg) {

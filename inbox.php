@@ -50,10 +50,15 @@ foreach ($rawDocs as $d) {
         'read'        => (bool)($d->read ?? false),
         'from_user_id'=> $fromId,
         'from_name'   => $senderNames[$fromId] ?? 'System',
-        'created_at'  => isset($d->created_at)
-                            ? $d->created_at->toDateTime()->format('M j, Y g:i A')
-                            : '',
+        'created_at'  => isset($d->created_at) ? formatMongoDate($d->created_at) : '',
     ];
+}
+
+$campaignImages = [];
+try {
+    $campaignImages = getCampaignDetailsMap(array_column($items, 'camp_id'));
+} catch (Exception $e) {
+    $campaignImages = [];
 }
 
 $unreadCount = count(array_filter($items, fn($n) => !$n['read']));
@@ -96,7 +101,12 @@ require_once 'includes/header.php';
             $isRead   = $n['read'];
             $typeIcon = match($n['type']) {
                 'change_request' => 'bi-send text-warning',
+                'role_change'    => 'bi-shield-lock text-danger',
                 default          => 'bi-bell text-muted',
+            };
+            $unreadBorder = match($n['type']) {
+                'role_change' => 'border-left:3px solid #ef4444!important;background:#fef2f2;',
+                default       => 'border-left:3px solid #f59e0b!important;background:#fffbeb;',
             };
             $changeLabel = match($n['change_type']) {
                 'name' => ['bg-info',           'Name change'],
@@ -106,7 +116,7 @@ require_once 'includes/header.php';
         ?>
         <div class="card border-0 shadow-sm notification-item <?= $isRead ? '' : 'unread' ?>"
              id="notif-<?= htmlspecialchars($n['id']) ?>"
-             style="<?= $isRead ? '' : 'border-left:3px solid #f59e0b!important;background:#fffbeb;' ?>">
+             style="<?= $isRead ? '' : $unreadBorder ?>">
             <div class="card-body py-3 px-4">
                 <div class="d-flex gap-3 align-items-start">
 
@@ -124,6 +134,12 @@ require_once 'includes/header.php';
                             </span>
                             <?php endif; ?>
                             <?php if ($n['camp_title']): ?>
+                            <?php $thumb = $campaignImages[(int)$n['camp_id']]['thumbnail'] ?? ''; ?>
+                            <?php if ($thumb): ?>
+                            <img src="<?= htmlspecialchars($thumb) ?>"
+                                 alt="<?= htmlspecialchars($n['camp_title']) ?>"
+                                 style="width:34px;height:26px;object-fit:cover;border-radius:4px;">
+                            <?php endif; ?>
                             <span class="fw-semibold small">
                                 <a href="partner/campaign/campaign-detail.php?id=<?= $n['camp_id'] ?>"
                                    class="text-success text-decoration-none">
