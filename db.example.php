@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/includes/time.php';
+
 // Copy this file to db.php and fill in your credentials.
 // db.php is listed in .gitignore — never commit real credentials.
 $serverName = "YOUR_SERVER_NAME";   // e.g. LAPTOP-XXXXX or localhost\SQLEXPRESS

@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password       = $_POST['password']      ?? '';
     $confirm        = $_POST['confirm']       ?? '';
     $wantsOrganizer = (($_POST['role'] ?? 'donor') === 'organizer');
-    $dbRole         = $wantsOrganizer ? 'pending_organizer' : 'donor';
+    $dbRole         = 'donor';
 
     if (!$username || !$email || !$password) {
         $error = 'All fields are required.';
@@ -36,15 +36,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $hash = password_hash($password, PASSWORD_BCRYPT);
                 $conn->prepare(
-                    "INSERT INTO Users (Username, Email, Password, Role) VALUES (?, ?, ?, ?)"
-                )->execute([$username, $email, $hash, $dbRole]);
+                    "INSERT INTO Users (Username, Email, Password, Role, CreatedAt) VALUES (?, ?, ?, ?, ?)"
+                )->execute([$username, $email, $hash, $dbRole, sqlNow()]);
 
                 // Get new user ID and seed MongoDB profile
                 $newId = (int)$conn->query("SELECT SCOPE_IDENTITY() AS id")->fetchColumn();
                 if ($newId > 0) seedProfile($newId);
 
                 $success = $wantsOrganizer
-                    ? 'Application submitted! An admin will review your organizer request. You can log in and donate while waiting.'
+                    ? 'Account created! Sign in, then complete the organizer application form for admin review.'
                     : 'Account created! You can now sign in.';
             }
         } catch (PDOException $e) {
@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div id="org-notice" class="mt-2 p-2 rounded small text-muted"
                      style="background:#f0faf5;border:1px solid #c3e6cb;display:none;">
                     <i class="bi bi-info-circle me-1 text-success"></i>
-                    Organizer accounts need admin approval before creating campaigns.
+                    Organizer access requires a detailed application after sign-in.
                 </div>
             </div>
 

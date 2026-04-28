@@ -3,6 +3,7 @@ session_start();
 header('Content-Type: application/json');
 
 require_once '../db.php';
+require_once '../includes/time.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -57,9 +58,10 @@ try {
     // Insert donation — the trigger fires automatically for Amt > 50
     $ins = $conn->prepare(
         "INSERT INTO Donations (CampID, DonorID, Amt, Time, Message, IsAnonymous)
-         VALUES (?, ?, ?, GETDATE(), ?, ?)"
+         VALUES (?, ?, ?, ?, ?, ?)"
     );
-    $ins->execute([$campID, $donorID, $amount, $message ?: null, $anonymous]);
+    $now = sqlNow();
+    $ins->execute([$campID, $donorID, $amount, $now, $message ?: null, $anonymous]);
 
     // Get the new donation ID (T-SQL SCOPE_IDENTITY is safest with sqlsrv PDO)
     $idRow    = $conn->query("SELECT SCOPE_IDENTITY() AS id")->fetch(PDO::FETCH_ASSOC);
@@ -69,6 +71,10 @@ try {
     $recChk = $conn->prepare("SELECT ID FROM Receipts WHERE DonID = ?");
     $recChk->execute([$donationID]);
     $receiptGenerated = (bool)$recChk->fetch();
+    if ($receiptGenerated) {
+        $conn->prepare("UPDATE Receipts SET IssuedAt = ? WHERE DonID = ?")
+             ->execute([$now, $donationID]);
+    }
 
     echo json_encode([
         'success'           => true,

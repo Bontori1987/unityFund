@@ -1,6 +1,7 @@
 <?php
 require_once '../../includes/auth.php';
 require_once '../../db.php';   // MS SQL PDO ($conn)
+require_once '../../includes/mongo.php';
 
 $isLoggedIn = isLoggedIn();
 $canDonate  = canDonate();
@@ -50,6 +51,91 @@ try {
     $dStmt->execute([$id]);
     $donations = $dStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) { /* view may not exist yet */ }
+
+$commentThread = ['total' => 0, 'roots' => []];
+try {
+    $commentThread = getCampaignComments($id);
+} catch (Exception $e) { /* MongoDB may be unavailable */ }
+
+$campaignDetails = null;
+try {
+    $campaignDetails = getCampaignDetails($id);
+} catch (Exception $e) { /* MongoDB may be unavailable */ }
+
+function assetUrl(string $path, string $basePath): string {
+    if ($path === '' || preg_match('#^https?://#', $path) || str_starts_with($path, '/')) {
+        return $path;
+    }
+    return $basePath . $path;
+}
+
+function renderCampaignComment(array $comment, bool $isLoggedIn, int $depth = 0): void {
+    $commentId = htmlspecialchars($comment['id'] ?? '');
+    $username  = htmlspecialchars($comment['username'] ?? 'User');
+    $body      = nl2br(htmlspecialchars($comment['body'] ?? ''));
+    $createdAt = htmlspecialchars($comment['created_at'] ?? '');
+    $userId    = (int)($comment['user_id'] ?? 0);
+    $indent    = $depth > 0 ? 'ms-4 ps-3 border-start' : '';
+?>
+    <div class="comment-item <?= $indent ?> mt-3"
+         id="comment-<?= $commentId ?>"
+         data-comment-id="<?= $commentId ?>"
+         data-depth="<?= $depth ?>">
+        <div class="d-flex gap-2">
+            <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0"
+                 style="width:34px;height:34px;">
+                <i class="bi bi-person"></i>
+            </div>
+            <div class="flex-grow-1">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <?php if ($userId > 0): ?>
+                    <a href="../../profile.php?id=<?= $userId ?>" class="fw-semibold text-success text-decoration-none">
+                        <?= $username ?>
+                    </a>
+                    <?php else: ?>
+                    <span class="fw-semibold"><?= $username ?></span>
+                    <?php endif; ?>
+                    <?php if ($createdAt): ?>
+                    <span class="text-muted small"><?= $createdAt ?></span>
+                    <?php endif; ?>
+                </div>
+                <div class="text-muted mt-1" style="line-height:1.6;white-space:normal;">
+                    <?= $body ?>
+                </div>
+
+                <?php if ($isLoggedIn): ?>
+                <button class="btn btn-link btn-sm text-success p-0 mt-1"
+                        type="button"
+                        data-bs-toggle="collapse"
+                        data-bs-target="#reply-<?= $commentId ?>">
+                    Reply
+                </button>
+                <div class="collapse mt-2" id="reply-<?= $commentId ?>">
+                    <form class="comment-form" data-parent-id="<?= $commentId ?>">
+                        <textarea class="form-control form-control-sm mb-2"
+                                  name="body"
+                                  rows="2"
+                                  maxlength="1000"
+                                  placeholder="Write a reply..."
+                                  required></textarea>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="submit" class="btn btn-success btn-sm">Post reply</button>
+                            <span class="comment-error text-danger small"></span>
+                        </div>
+                    </form>
+                </div>
+                <?php endif; ?>
+
+                <div class="comment-replies" data-replies-for="<?= $commentId ?>">
+                    <?php foreach (($comment['replies'] ?? []) as $reply): ?>
+                        <?php renderCampaignComment($reply, $isLoggedIn, $depth + 1); ?>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+<?php
+}
 
 $categoryIcons = [
     'Technology'  => 'bi-cpu',
@@ -108,10 +194,17 @@ require_once '../../includes/header.php';
             </div>
 
             <!-- Campaign banner (icon-based) -->
+            <?php if (!empty($campaignDetails['banner'])): ?>
+            <img src="<?= htmlspecialchars(assetUrl($campaignDetails['banner'], '../../')) ?>"
+                 alt="<?= htmlspecialchars($campaign['Title']) ?>"
+                 class="rounded mb-4 w-100"
+                 style="height:280px;object-fit:cover;">
+            <?php else: ?>
             <div class="rounded mb-4 d-flex align-items-center justify-content-center"
                  style="height:280px;background:linear-gradient(135deg,#e6f7ef,#d4edda);">
                 <i class="bi <?= $icon ?> text-success" style="font-size:6rem;opacity:.5;"></i>
             </div>
+            <?php endif; ?>
 
             <!-- Description -->
             <div class="card">
@@ -203,11 +296,60 @@ require_once '../../includes/header.php';
             </div>
             <?php endif; ?>
 
+            <!-- Threaded comments -->
+            <div class="card mt-4" id="comments">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-3">
+                        <div>
+                            <h5 class="fw-bold mb-1">Discussion</h5>
+                            <p class="text-muted small mb-0">Ask questions, share encouragement, or reply in a thread.</p>
+                        </div>
+                        <span class="badge bg-success bg-opacity-10 text-success small" id="commentCountBadge">
+                            <?= (int)$commentThread['total'] ?> comment<?= (int)$commentThread['total'] !== 1 ? 's' : '' ?>
+                        </span>
+                    </div>
+
+                    <?php if ($isLoggedIn): ?>
+                    <form class="comment-form mb-4" data-parent-id="">
+                        <textarea class="form-control mb-2"
+                                  name="body"
+                                  rows="3"
+                                  maxlength="1000"
+                                  placeholder="Join the discussion..."
+                                  required></textarea>
+                        <div class="d-flex align-items-center gap-2">
+                            <button type="submit" class="btn btn-success btn-sm">
+                                <i class="bi bi-chat-left-text me-1"></i>Post comment
+                            </button>
+                            <span class="comment-error text-danger small"></span>
+                        </div>
+                    </form>
+                    <?php else: ?>
+                    <div class="alert alert-light border d-flex align-items-center justify-content-between gap-3 mb-4">
+                        <span class="small text-muted">Sign in to join the discussion.</span>
+                        <a href="../../login.php?redirect=<?= urlencode('partner/campaign/campaign-detail.php?id='.$id.'#comments') ?>"
+                           class="btn btn-outline-success btn-sm">Sign in</a>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (empty($commentThread['roots'])): ?>
+                    <p class="text-muted fst-italic mb-0" id="noCommentsMessage">No comments yet. Be the first to start the discussion.</p>
+                    <?php endif; ?>
+                    <div class="comment-thread" id="commentThread">
+                    <?php if (!empty($commentThread['roots'])): ?>
+                        <?php foreach ($commentThread['roots'] as $comment): ?>
+                            <?php renderCampaignComment($comment, $isLoggedIn); ?>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <!-- ── RIGHT: Stats sidebar ───────────────────────────────── -->
         <div class="col-lg-4">
-            <div class="card sticky-top" style="top:80px;">
+            <div class="card campaign-stats-card">
                 <div class="card-body">
 
                     <div class="mb-1">
@@ -268,6 +410,9 @@ require_once '../../includes/header.php';
 </div>
 
 <script>
+const CAMPAIGN_ID = <?= (int)$id ?>;
+let commentCount = <?= (int)$commentThread['total'] ?>;
+
 function handleShare() {
     navigator.clipboard.writeText(window.location.href).then(() => {
         const t = document.getElementById('toastMsg');
@@ -275,6 +420,164 @@ function handleShare() {
         setTimeout(() => t.style.display = 'none', 2500);
     });
 }
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+}
+
+function nl2br(value) {
+    return escapeHtml(value).replace(/\r?\n/g, '<br>');
+}
+
+function updateCommentCount() {
+    const badge = document.getElementById('commentCountBadge');
+    if (badge) {
+        badge.textContent = `${commentCount} comment${commentCount === 1 ? '' : 's'}`;
+    }
+}
+
+function commentHtml(comment, depth) {
+    const id = escapeHtml(comment.id);
+    const username = escapeHtml(comment.username || 'User');
+    const createdAt = escapeHtml(comment.created_at || '');
+    const body = nl2br(comment.body || '');
+    const userId = Number(comment.user_id || 0);
+    const indent = depth > 0 ? 'ms-4 ps-3 border-start' : '';
+    const profileLink = userId > 0
+        ? `<a href="../../profile.php?id=${userId}" class="fw-semibold text-success text-decoration-none">${username}</a>`
+        : `<span class="fw-semibold">${username}</span>`;
+
+    return `
+        <div class="comment-item ${indent} mt-3" id="comment-${id}" data-comment-id="${id}" data-depth="${depth}">
+            <div class="d-flex gap-2">
+                <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0"
+                     style="width:34px;height:34px;">
+                    <i class="bi bi-person"></i>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        ${profileLink}
+                        ${createdAt ? `<span class="text-muted small">${createdAt}</span>` : ''}
+                    </div>
+                    <div class="text-muted mt-1" style="line-height:1.6;white-space:normal;">
+                        ${body}
+                    </div>
+
+                    <button class="btn btn-link btn-sm text-success p-0 mt-1"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#reply-${id}">
+                        Reply
+                    </button>
+                    <div class="collapse mt-2" id="reply-${id}">
+                        <form class="comment-form" data-parent-id="${id}">
+                            <textarea class="form-control form-control-sm mb-2"
+                                      name="body"
+                                      rows="2"
+                                      maxlength="1000"
+                                      placeholder="Write a reply..."
+                                      required></textarea>
+                            <div class="d-flex align-items-center gap-2">
+                                <button type="submit" class="btn btn-success btn-sm">Post reply</button>
+                                <span class="comment-error text-danger small"></span>
+                            </div>
+                        </form>
+                    </div>
+
+                    <div class="comment-replies" data-replies-for="${id}"></div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function insertComment(comment) {
+    const parentId = comment.parent_id || '';
+    let depth = 0;
+    let target = document.getElementById('commentThread');
+
+    if (parentId) {
+        const parent = document.querySelector(`[data-comment-id="${parentId}"]`);
+        const replies = document.querySelector(`[data-replies-for="${parentId}"]`);
+        if (parent) depth = Number(parent.dataset.depth || 0) + 1;
+        if (replies) target = replies;
+    }
+
+    if (!target) return;
+    target.insertAdjacentHTML('beforeend', commentHtml(comment, depth));
+
+    const empty = document.getElementById('noCommentsMessage');
+    if (empty) empty.style.display = 'none';
+
+    commentCount += 1;
+    updateCommentCount();
+
+    const inserted = document.getElementById(`comment-${comment.id}`);
+    if (inserted) {
+        inserted.querySelectorAll('.comment-form').forEach((form) => bindCommentForm(form));
+        inserted.scrollIntoView({behavior: 'smooth', block: 'center'});
+    }
+}
+
+function bindCommentForm(form) {
+    if (form.dataset.bound === '1') return;
+    form.dataset.bound = '1';
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        const textarea = form.querySelector('textarea[name="body"]');
+        const error = form.querySelector('.comment-error');
+        const button = form.querySelector('button[type="submit"]');
+        const body = textarea.value.trim();
+
+        if (!body) {
+            error.textContent = 'Write a comment first.';
+            return;
+        }
+
+        error.textContent = '';
+        button.disabled = true;
+
+        try {
+            const response = await fetch('../../api/campaign_comments.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    camp_id: CAMPAIGN_ID,
+                    parent_id: form.dataset.parentId || null,
+                    body: body
+                })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data.success || !data.comment) {
+                throw new Error(data.error || 'Could not save comment.');
+            }
+
+            textarea.value = '';
+            insertComment(data.comment);
+
+            const collapse = form.closest('.collapse');
+            if (collapse && window.bootstrap) {
+                bootstrap.Collapse.getOrCreateInstance(collapse).hide();
+            }
+        } catch (err) {
+            error.textContent = err.message || 'Could not save comment.';
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
+
+document.querySelectorAll('.comment-form').forEach((form) => {
+    bindCommentForm(form);
+});
+
 </script>
 
 <?php require_once '../../includes/footer.php'; ?>

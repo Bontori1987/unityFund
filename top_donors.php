@@ -3,6 +3,7 @@ $pageTitle = 'Top Donors';
 $basePath  = '';
 require_once 'includes/auth.php';
 require_once 'db.php';
+require_once 'includes/mongo.php';
 
 try {
     $stmt = $conn->query(
@@ -25,6 +26,13 @@ try {
     $perCampaign = $stmt2->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $perCampaign = [];
+}
+
+$campaignImages = [];
+try {
+    $campaignImages = getCampaignDetailsMap(array_column($perCampaign, 'CampID'));
+} catch (Exception $e) {
+    $campaignImages = [];
 }
 
 $medals  = ['1' => '🥇', '2' => '🥈', '3' => '🥉'];
@@ -131,7 +139,18 @@ require_once 'includes/header.php';
             <h5 class="fw-bold mb-4">Top Donors by Campaign</h5>
             <?php foreach ($grouped as $campID => $rows): ?>
             <div class="mb-4">
-                <p class="section-title mb-2"><?= htmlspecialchars($rows[0]['CampaignTitle']) ?></p>
+                <?php $thumb = $campaignImages[(int)$campID]['thumbnail'] ?? ''; ?>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <?php if ($thumb): ?>
+                    <img src="<?= htmlspecialchars($thumb) ?>"
+                         alt="<?= htmlspecialchars($rows[0]['CampaignTitle']) ?>"
+                         style="width:52px;height:38px;object-fit:cover;border-radius:4px;">
+                    <?php endif; ?>
+                    <a href="partner/campaign/campaign-detail.php?id=<?= (int)$campID ?>"
+                       class="section-title text-success text-decoration-none mb-0">
+                        <?= htmlspecialchars($rows[0]['CampaignTitle']) ?>
+                    </a>
+                </div>
                 <table class="table table-sm align-middle mb-0">
                     <thead>
                         <tr><th>Rank</th><th>Donor</th><th>Amount</th></tr>

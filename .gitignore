@@ -1,6 +1,7 @@
 # ── Credentials & environment ──────────────────────────────────
 db.php
 includes/mongo.php
+includes/stripe.php
 .env
 *.env
 

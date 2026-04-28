@@ -1,6 +1,7 @@
 <?php
 require_once 'includes/auth.php';
 require_once 'db.php';
+require_once 'includes/mongo.php';
 
 $CATEGORIES = ['All', 'Technology', 'Arts', 'Community', 'Education', 'Environment', 'Health', 'Food', 'Other'];
 $activeCategory = $_GET['cat'] ?? 'All';
@@ -54,6 +55,24 @@ try {
     $campaigns = [];
 }
 
+$campaignImages = [];
+try {
+    $campaignIds = array_map('intval', array_column($campaigns, 'CampID'));
+    if (!empty($campaignIds)) {
+        foreach (mongoFind('campaign_details', ['camp_id' => ['$in' => $campaignIds]]) as $doc) {
+            $campId = (int)($doc->camp_id ?? 0);
+            if ($campId > 0) {
+                $campaignImages[$campId] = [
+                    'banner'    => $doc->banner ?? '',
+                    'thumbnail' => $doc->thumbnail ?? '',
+                ];
+            }
+        }
+    }
+} catch (Exception $e) {
+    $campaignImages = [];
+}
+
 $categoryIcons = [
     'Technology'  => 'bi-cpu',
     'Arts'        => 'bi-palette',
@@ -73,9 +92,9 @@ require_once 'includes/header.php';
 <!-- ── Hero ──────────────────────────────────────────────────── -->
 <section class="hero-section py-5">
     <div class="container py-3">
-        <div class="row align-items-center">
-            <div class="col-lg-7">
-                <p class="text-success fw-semibold mb-2 small text-uppercase letter-spacing-1">
+        <div class="row align-items-center g-4">
+            <div class="col-lg-8">
+                <p class="text-success fw-semibold mb-2 small text-uppercase">
                     Crowdfunding for good
                 </p>
                 <h1 class="display-5 fw-bold mb-3" style="line-height:1.2;">
@@ -100,10 +119,10 @@ require_once 'includes/header.php';
                     <?php endif; ?>
                 </div>
             </div>
-            <div class="col-lg-5 d-none d-lg-flex justify-content-end">
-                <div class="text-center p-4">
+            <div class="col-lg-4">
+                <div class="text-center p-4 bg-white border rounded shadow-sm">
                     <div style="font-size:7rem;line-height:1;">💚</div>
-                    <p class="text-muted small mt-2">Every dollar tracked transparently</p>
+                    <p class="text-muted small mt-2 mb-0">Every dollar tracked transparently</p>
                 </div>
             </div>
         </div>
@@ -193,13 +212,20 @@ require_once 'includes/header.php';
             $pct     = $goal > 0 ? min(($raised / $goal) * 100, 100) : 0;
             $icon    = $categoryIcons[$c['Category']] ?? 'bi-tag';
             $detailUrl = 'partner/campaign/campaign-detail.php?id=' . $c['CampID'];
+            $thumb = $campaignImages[(int)$c['CampID']]['thumbnail'] ?? '';
         ?>
         <div class="col">
             <div class="card campaign-card h-100" onclick="location.href='<?= $detailUrl ?>'">
+                <?php if ($thumb): ?>
+                <img src="<?= htmlspecialchars($thumb) ?>"
+                     alt="<?= htmlspecialchars($c['Title']) ?>"
+                     class="card-img-top">
+                <?php else: ?>
                 <!-- Image placeholder with category icon -->
                 <div class="img-placeholder">
                     <i class="bi <?= $icon ?> text-success" style="font-size:3.5rem;opacity:.6;"></i>
                 </div>
+                <?php endif; ?>
                 <div class="card-body d-flex flex-column">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <span class="badge bg-success bg-opacity-10 text-success fw-semibold"
@@ -208,7 +234,11 @@ require_once 'includes/header.php';
                         </span>
                     </div>
                     <h5 class="card-title fw-bold mb-1" style="font-size:1rem;line-height:1.35;">
-                        <?= htmlspecialchars($c['Title']) ?>
+                        <a href="<?= $detailUrl ?>"
+                           class="text-dark text-decoration-none"
+                           onclick="event.stopPropagation()">
+                            <?= htmlspecialchars($c['Title']) ?>
+                        </a>
                     </h5>
                     <div class="mt-auto pt-3">
                         <!-- Progress -->
@@ -247,7 +277,7 @@ require_once 'includes/header.php';
     <div class="container text-center">
         <h3 class="fw-bold mb-2">Have a cause worth funding?</h3>
         <p class="mb-4 opacity-75">Create a campaign and let the community back it. Admin-reviewed before going live.</p>
-        <a href="register.php<?= isLoggedIn() ? '' : '' ?>"
+        <a href="<?= isLoggedIn() ? 'apply_organizer.php' : 'register.php' ?>"
            class="btn btn-light btn-lg px-5 fw-semibold text-success">
             Start a campaign
         </a>

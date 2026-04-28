@@ -39,7 +39,7 @@ $_badge = $_role_labels[$_nav_role] ?? $_role_labels['guest'];
 
             <!-- Admin-only links -->
             <?php if (isAdmin()): ?>
-            <a href="admin_dashboard.php" <?= basename($_SERVER['PHP_SELF']) === 'admin_dashboard.php' ? 'class="active"' : '' ?>>Dashboard</a>
+            <a href="my_campaigns.php" <?= basename($_SERVER['PHP_SELF']) === 'my_campaigns.php' ? 'class="active"' : '' ?>>Dashboard</a>
             <?php endif; ?>
 
             <!-- Role badge + logout -->

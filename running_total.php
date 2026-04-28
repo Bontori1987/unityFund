@@ -3,6 +3,7 @@ $pageTitle = 'Progress';
 $basePath  = '';
 require_once 'includes/auth.php';
 require_once 'db.php';
+require_once 'includes/mongo.php';
 
 try {
     $stmt = $conn->query(
@@ -23,6 +24,13 @@ $totals = [];
 foreach ($campaigns as $cid => $crows) {
     $last = end($crows);
     $totals[$cid] = $last['RunningTotal'];
+}
+
+$campaignImages = [];
+try {
+    $campaignImages = getCampaignDetailsMap(array_keys($campaigns));
+} catch (Exception $e) {
+    $campaignImages = [];
 }
 
 try {
@@ -60,6 +68,7 @@ require_once 'includes/header.php';
         $raised = $totals[$cid];
         $goal   = $goals[$cid] ?? null;
         $pct    = $goal ? min(($raised / $goal) * 100, 100) : 0;
+        $thumb  = $campaignImages[(int)$cid]['thumbnail'] ?? '';
     ?>
     <div class="card mb-4">
         <div class="card-body">
@@ -67,7 +76,21 @@ require_once 'includes/header.php';
             <!-- Header -->
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                 <div>
-                    <h5 class="fw-bold mb-0"><?= $title ?></h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <?php if ($thumb): ?>
+                        <img src="<?= htmlspecialchars($thumb) ?>"
+                             alt="<?= $title ?>"
+                             style="width:56px;height:42px;object-fit:cover;border-radius:4px;">
+                        <?php endif; ?>
+                        <div>
+                            <h5 class="fw-bold mb-0">
+                                <a href="partner/campaign/campaign-detail.php?id=<?= (int)$cid ?>"
+                                   class="text-dark text-decoration-none">
+                                    <?= $title ?>
+                                </a>
+                            </h5>
+                        </div>
+                    </div>
                     <?php if ($goal): ?>
                     <p class="text-muted small mb-0">
                         Goal: <strong>$<?= number_format($goal, 2) ?></strong>

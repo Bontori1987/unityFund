@@ -3,6 +3,7 @@ $pageTitle = 'Receipts';
 $basePath  = '';
 require_once 'includes/auth.php';
 require_once 'db.php';
+require_once 'includes/mongo.php';
 
 requireLogin('receipts.php');
 
@@ -12,7 +13,7 @@ $isAdmin = isAdmin();
 try {
     if ($isAdmin) {
         $stmt = $conn->query(
-            "SELECT r.ID AS ReceiptID, r.DonID, u.Username AS DonorName,
+            "SELECT r.ID AS ReceiptID, r.DonID, c.CampID, u.Username AS DonorName,
                     c.Title AS CampaignTitle, d.Amt AS DonationAmt,
                     r.TaxAmount, r.IssuedAt
              FROM Receipts r
@@ -23,7 +24,7 @@ try {
         );
     } else {
         $stmt = $conn->prepare(
-            "SELECT r.ID AS ReceiptID, r.DonID, c.Title AS CampaignTitle,
+            "SELECT r.ID AS ReceiptID, r.DonID, c.CampID, c.Title AS CampaignTitle,
                     d.Amt AS DonationAmt, r.TaxAmount, r.IssuedAt
              FROM Receipts r
              JOIN Donations d ON r.DonID  = d.ID
@@ -41,7 +42,7 @@ try {
 
 try {
     $histStmt = $conn->prepare(
-        "SELECT d.ID, c.Title AS CampaignTitle, d.Amt, d.Time,
+        "SELECT d.ID, c.CampID, c.Title AS CampaignTitle, d.Amt, d.Time,
                 CASE WHEN r.ID IS NOT NULL THEN 1 ELSE 0 END AS HasReceipt
          FROM Donations d
          JOIN Campaigns c ON d.CampID = c.CampID
@@ -53,6 +54,14 @@ try {
     $history = $histStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $history = [];
+}
+
+$campaignImages = [];
+try {
+    $campaignIds = array_merge(array_column($receipts ?? [], 'CampID'), array_column($history ?? [], 'CampID'));
+    $campaignImages = getCampaignDetailsMap($campaignIds);
+} catch (Exception $e) {
+    $campaignImages = [];
 }
 
 require_once 'includes/header.php';
@@ -98,7 +107,23 @@ require_once 'includes/header.php';
                             <?php if ($isAdmin): ?>
                             <td><?= htmlspecialchars($r['DonorName']) ?></td>
                             <?php endif; ?>
-                            <td><?= htmlspecialchars($r['CampaignTitle']) ?></td>
+                            <td>
+                                <?php
+                                    $cid = (int)$r['CampID'];
+                                    $thumb = $campaignImages[$cid]['thumbnail'] ?? '';
+                                ?>
+                                <div class="d-flex align-items-center gap-2">
+                                    <?php if ($thumb): ?>
+                                    <img src="<?= htmlspecialchars($thumb) ?>"
+                                         alt="<?= htmlspecialchars($r['CampaignTitle']) ?>"
+                                         style="width:46px;height:34px;object-fit:cover;border-radius:4px;">
+                                    <?php endif; ?>
+                                    <a href="partner/campaign/campaign-detail.php?id=<?= $cid ?>"
+                                       class="text-success text-decoration-none fw-semibold">
+                                        <?= htmlspecialchars($r['CampaignTitle']) ?>
+                                    </a>
+                                </div>
+                            </td>
                             <td><strong>$<?= number_format($r['DonationAmt'], 2) ?></strong></td>
                             <td class="text-success fw-semibold">$<?= number_format($r['TaxAmount'], 2) ?></td>
                             <td class="text-muted small"><?= date('M j, Y g:i A', strtotime($r['IssuedAt'])) ?></td>
@@ -138,7 +163,23 @@ require_once 'includes/header.php';
                         <?php foreach ($history as $d): ?>
                         <tr>
                             <td class="text-muted small"><?= $d['ID'] ?></td>
-                            <td><?= htmlspecialchars($d['CampaignTitle']) ?></td>
+                            <td>
+                                <?php
+                                    $cid = (int)$d['CampID'];
+                                    $thumb = $campaignImages[$cid]['thumbnail'] ?? '';
+                                ?>
+                                <div class="d-flex align-items-center gap-2">
+                                    <?php if ($thumb): ?>
+                                    <img src="<?= htmlspecialchars($thumb) ?>"
+                                         alt="<?= htmlspecialchars($d['CampaignTitle']) ?>"
+                                         style="width:46px;height:34px;object-fit:cover;border-radius:4px;">
+                                    <?php endif; ?>
+                                    <a href="partner/campaign/campaign-detail.php?id=<?= $cid ?>"
+                                       class="text-success text-decoration-none fw-semibold">
+                                        <?= htmlspecialchars($d['CampaignTitle']) ?>
+                                    </a>
+                                </div>
+                            </td>
                             <td><strong>$<?= number_format($d['Amt'], 2) ?></strong></td>
                             <td class="text-muted small"><?= date('M j, Y', strtotime($d['Time'])) ?></td>
                             <td>
