@@ -210,10 +210,13 @@ require_once '../../includes/header.php';
             <!-- NOTE: have implemented the 'Description' successfully 
                         but need to edit the UI/UX of this section-->
             <div class="card">
-                <div class="card-body">
-                    <h5 class="fw-bold mb-3">About this campaign</h5>
+                <!-- <div class="card-body"> -->
+                    <div class="card-body" style="padding: 0.75rem 1rem;">
+                    <!-- <h5 class="fw-bold mb-3">About this campaign</h5> -->
+                    <h5 class="fw-bold mb-2">About this campaign</h5>
                     <?php if (!empty($campaignDetails['description'] ?? '')): ?>
-                    <div class="text-muted" style="line-height:1.8;white-space:pre-wrap;">
+                    <!-- <div class="text-muted" style="line-height:1.8;white-space:pre-wrap;"> -->
+                    <div class="text-muted" style="line-height:1.6;white-space:pre-wrap;">    
                         <?= nl2br(htmlspecialchars($campaignDetails['description'])) ?>
                     </div>
                     <?php else: ?>
