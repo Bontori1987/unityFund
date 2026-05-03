@@ -1,265 +1,584 @@
-# UnityFund — Project Summary
-> Charity crowdfunding web platform built with PHP, MS SQL Server, and MongoDB.
-> Written for collaborators to understand the full system at a glance.
+# UnityFund — Project Documentation
+**Version:** 1.0 | **Stack:** PHP 8 · MS SQL Server · MongoDB · Stripe · Bootstrap 5.3
+**Author:** thinh | **Branch:** thin | **Environment:** XAMPP / Windows, GMT+7
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Language | PHP 8.x (no framework) |
-| Web Server | Apache via XAMPP |
-| Primary DB | MS SQL Server (`UnityFindDB`) via PDO `sqlsrv` |
-| Secondary DB | MongoDB (`unityfund`) via raw `MongoDB\Driver\*` (no Composer) |
-| Frontend | Bootstrap 5.3 + Bootstrap Icons |
-| Auth | PHP sessions |
+## Table of Contents
+1. [Project Overview](#1-project-overview)
+2. [System Architecture](#2-system-architecture)
+3. [Database Design — MS SQL Server](#3-database-design--ms-sql-server)
+4. [Database Design — MongoDB](#4-database-design--mongodb)
+5. [Hybrid Database Strategy](#5-hybrid-database-strategy)
+6. [User Roles & Permissions](#6-user-roles--permissions)
+7. [Payment Flow (Stripe)](#7-payment-flow-stripe)
+8. [File & Module Structure](#8-file--module-structure)
+9. [Key Features](#9-key-features)
+10. [Security Considerations](#10-security-considerations)
+11. [Testing Checklist](#11-testing-checklist)
+12. [Presentation Talking Points](#12-presentation-talking-points)
 
 ---
 
-## Project Root
+## 1. Project Overview
+
+**UnityFund** is a charity crowdfunding web platform where:
+- **Donors** discover and fund campaigns
+- **Organizers** create and manage fundraising campaigns
+- **Admins** oversee the entire platform — approving campaigns, managing users, monitoring transactions
+
+The platform integrates a **relational database** (MS SQL Server) for transactional data and a **document database** (MongoDB) for rich content, creating a practical hybrid architecture.
+
+---
+
+## 2. System Architecture
+
 ```
-c:\xampp\htdocs\unityfund\
+Browser (Bootstrap 5.3 UI)
+        │
+        ▼
+PHP 8 Application Layer (XAMPP)
+        │
+        ├── MS SQL Server (PDO sqlsrv)
+        │       └── Users, Campaigns, Donations,
+        │           Receipts, Transactions
+        │
+        ├── MongoDB (Raw Driver, no Composer)
+        │       └── user_profiles, campaign_details,
+        │           comments, organizer_applications,
+        │           notifications
+        │
+        └── Stripe API (Sandbox)
+                └── PaymentIntent flow
 ```
+
+### Technology Choices
+
+| Layer | Technology | Reason |
+|---|---|---|
+| Backend | PHP 8 | Course requirement, runs on XAMPP |
+| Relational DB | MS SQL Server | Course requirement; supports triggers, window functions, views |
+| Document DB | MongoDB | Rich content, flexible schema, no Composer dependency |
+| Frontend | Bootstrap 5.3 + vanilla JS | Responsive, no build step needed |
+| Payments | Stripe (Sandbox) | Industry-standard, full test environment |
+| Auth | PHP sessions + bcrypt | Secure, no external library needed |
 
 ---
 
-## MS SQL Database — `UnityFindDB`
+## 3. Database Design — MS SQL Server
+
+### Entity Relationship Overview
+
+```
+Users ──< Donations >── Campaigns
+  │              │
+  │         Receipts (auto-trigger)
+  │
+  └──< Transactions >── Campaigns
+```
 
 ### Tables
 
-#### `Users`
+#### Users
 ```sql
-UserID      INT PK IDENTITY
-Username    NVARCHAR(100)
-Email       NVARCHAR(255) UNIQUE
-Password    NVARCHAR(255)   -- bcrypt hash
-Role        NVARCHAR(20)    -- 'donor' | 'pending_organizer' | 'organizer' | 'admin'
-IsAnonymous BIT DEFAULT 0   -- global anonymous toggle
-CreatedAt   DATETIME
+CREATE TABLE Users (
+    UserID      INT           PRIMARY KEY IDENTITY(1,1),
+    Username    NVARCHAR(100) NOT NULL,
+    Email       NVARCHAR(255) NOT NULL UNIQUE,
+    Password    NVARCHAR(255) NOT NULL,       -- bcrypt hash
+    Role        NVARCHAR(20)  NOT NULL DEFAULT 'donor',
+    IsAnonymous BIT           NOT NULL DEFAULT 0,
+    CreatedAt   DATETIME      NOT NULL DEFAULT DATEADD(HOUR,7,SYSUTCDATETIME())
+);
+```
+- Roles: `donor`, `pending_organizer`, `organizer`, `admin`
+- `IsAnonymous` hides donor identity from all public views
+- Passwords stored as bcrypt hashes (never plain text)
+
+#### Campaigns
+```sql
+CREATE TABLE Campaigns (
+    CampID    INT           PRIMARY KEY IDENTITY(1,1),
+    Title     NVARCHAR(255) NOT NULL,
+    GoalAmt   DECIMAL(10,2) NOT NULL,
+    HostID    INT           FOREIGN KEY REFERENCES Users(UserID),
+    Status    NVARCHAR(20)  NOT NULL DEFAULT 'pending',
+    Category  NVARCHAR(50)  NOT NULL DEFAULT 'Other',
+    CreatedAt DATETIME      NOT NULL DEFAULT DATEADD(HOUR,7,SYSUTCDATETIME())
+);
+```
+- Status lifecycle: `pending` → `active` → `closed`
+- New campaigns always start as `pending` until admin approves
+- Rich content (description, images) stored in MongoDB `campaign_details`
+
+#### Donations
+```sql
+CREATE TABLE Donations (
+    ID          INT           PRIMARY KEY IDENTITY(1,1),
+    CampID      INT           NOT NULL REFERENCES Campaigns(CampID),
+    DonorID     INT           NOT NULL REFERENCES Users(UserID),
+    Amt         DECIMAL(10,2) NOT NULL CHECK (Amt > 0),
+    Time        DATETIME      NOT NULL DEFAULT DATEADD(HOUR,7,SYSUTCDATETIME()),
+    Message     NVARCHAR(500) NULL,
+    IsAnonymous BIT           NOT NULL DEFAULT 0
+);
+```
+- `CHECK (Amt > 0)` enforces positive-only donations at DB level
+- `IsAnonymous` per-donation flag, separate from user-level flag
+
+#### Receipts
+```sql
+CREATE TABLE Receipts (
+    ID        INT           PRIMARY KEY IDENTITY(1,1),
+    DonID     INT           NOT NULL UNIQUE REFERENCES Donations(ID),
+    IssuedAt  DATETIME      NOT NULL DEFAULT DATEADD(HOUR,7,SYSUTCDATETIME()),
+    TaxAmount DECIMAL(10,2) NOT NULL
+);
+```
+- `UNIQUE` on `DonID` — one receipt per donation maximum
+- Auto-generated by trigger (see below)
+
+#### Transactions
+```sql
+CREATE TABLE Transactions (
+    TxID        INT           PRIMARY KEY IDENTITY(1,1),
+    UserID      INT           NOT NULL REFERENCES Users(UserID),
+    CampID      INT           NOT NULL REFERENCES Campaigns(CampID),
+    Amt         DECIMAL(10,2) NOT NULL CHECK (Amt > 0),
+    Status      NVARCHAR(20)  NOT NULL DEFAULT 'pending',
+    GatewayRef  NVARCHAR(255) NULL,   -- Stripe PaymentIntent ID (pi_xxx)
+    FailReason  NVARCHAR(500) NULL,
+    CreatedAt   DATETIME      NOT NULL DEFAULT GETDATE(),
+    ProcessedAt DATETIME      NULL
+);
+```
+- Acts as a **payment gateway middleware layer** between intent and confirmed donation
+- Status values: `pending` | `success` | `failed`
+- `GatewayRef` links to Stripe's `pi_xxx` PaymentIntent ID
+
+---
+
+### Trigger: Auto Tax Receipt
+
+```sql
+CREATE TRIGGER trg_GenerateTaxReceipt
+ON Donations AFTER INSERT
+AS BEGIN
+    INSERT INTO Receipts (DonID, IssuedAt, TaxAmount)
+    SELECT i.ID, DATEADD(HOUR,7,SYSUTCDATETIME()), ROUND(i.Amt * 0.10, 2)
+    FROM INSERTED i
+    WHERE i.Amt > 50;
+END;
 ```
 
-#### `Campaigns`
-```sql
-CampID      INT PK IDENTITY
-Title       NVARCHAR(255)
-GoalAmt     DECIMAL(10,2)
-HostID      INT FK → Users.UserID
-Status      NVARCHAR(20)    -- 'pending' | 'active' | 'closed'
-Category    NVARCHAR(50)    -- Technology | Arts | Community | Education | Environment | Health | Food | Other
-Description NVARCHAR(MAX)
-CreatedAt   DATETIME
-```
+**Why a trigger?**
+- Business rule enforced at the database level — cannot be bypassed by application bugs
+- Fires automatically for every donation > $50
+- Tax amount = 10% of the donation (deductible portion)
+- `INSERTED` is a SQL Server pseudo-table containing the newly inserted row(s)
 
-#### `Donations`
-```sql
-ID          INT PK IDENTITY
-CampID      INT FK → Campaigns.CampID
-DonorID     INT FK → Users.UserID
-Amt         DECIMAL(10,2) CHECK (Amt > 0)
-Time        DATETIME DEFAULT GETDATE()
-Message     NVARCHAR(500)
-IsAnonymous BIT DEFAULT 0   -- per-donation anonymous flag
-```
-
-#### `Receipts`
-```sql
-ID          INT PK IDENTITY
-DonID       INT FK → Donations.ID UNIQUE  -- one receipt per donation max
-IssuedAt    DATETIME
-TaxAmount   DECIMAL(10,2)   -- 10% of donation amount
-```
-
-### Trigger
-**`trg_GenerateTaxReceipt`** — fires AFTER INSERT on Donations.
-Auto-creates a receipt row in `Receipts` for any donation where `Amt > 50`.
-TaxAmount = `Amt * 0.10`.
+---
 
 ### Views (Window Functions)
 
-**`vw_DonationRunningTotal`**
-- `SUM(d.Amt) OVER (PARTITION BY d.CampID ORDER BY d.Time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)` → `RunningTotal`
-- `RANK() OVER (PARTITION BY d.CampID ORDER BY d.Amt DESC)` → `RankInCampaign`
-- Respects anonymity: DonorID/DonorName are NULL/'Anonymous' when `d.IsAnonymous=1 OR u.IsAnonymous=1`
-
-**`vw_TopDonors`**
-- Aggregates total donated per user across all campaigns
-- `RANK() OVER (ORDER BY SUM(d.Amt) DESC)` → `DonorRank`
-- Excludes rows where `d.IsAnonymous=1 OR u.IsAnonymous=1`
-
-### Table Relationships
+#### vw_DonationRunningTotal
+```sql
+CREATE VIEW vw_DonationRunningTotal AS
+SELECT
+    d.ID, d.CampID, c.Title AS CampaignTitle,
+    CASE WHEN d.IsAnonymous = 1 OR u.IsAnonymous = 1
+         THEN NULL ELSE d.DonorID END AS DonorID,
+    CASE WHEN d.IsAnonymous = 1 OR u.IsAnonymous = 1
+         THEN 'Anonymous' ELSE u.Username END AS DonorName,
+    d.Amt, d.Time,
+    SUM(d.Amt) OVER (
+        PARTITION BY d.CampID
+        ORDER BY d.Time
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    ) AS RunningTotal,
+    RANK() OVER (PARTITION BY d.CampID ORDER BY d.Amt DESC) AS RankInCampaign
+FROM Donations d
+JOIN Campaigns c ON d.CampID  = c.CampID
+JOIN Users     u ON d.DonorID = u.UserID;
 ```
-Users (root)
-  ├──< Campaigns     via HostID      (one organizer → many campaigns)
-  └──< Donations     via DonorID     (one donor → many donations)
-          ├──► Campaigns via CampID  (many donations → one campaign)
-          └──< Receipts via DonID    (one donation → one receipt max)
+
+**Window functions used:**
+- `SUM() OVER (PARTITION BY ... ORDER BY ...)` — cumulative running total per campaign
+- `RANK() OVER (PARTITION BY ... ORDER BY ...)` — donation rank within campaign
+
+#### vw_TopDonors
+```sql
+CREATE VIEW vw_TopDonors AS
+WITH DonorTotals AS (
+    SELECT u.UserID, u.Username,
+           SUM(d.Amt) AS TotalDonated,
+           COUNT(d.ID) AS DonationCount,
+           MAX(d.Time) AS LastDonation
+    FROM Donations d JOIN Users u ON d.DonorID = u.UserID
+    WHERE d.IsAnonymous = 0 AND u.IsAnonymous = 0
+    GROUP BY u.UserID, u.Username
+)
+SELECT *, RANK() OVER (ORDER BY TotalDonated DESC) AS OverallRank
+FROM DonorTotals;
 ```
+
+**Techniques used:**
+- CTE (`WITH DonorTotals AS (...)`) for readable pre-aggregation
+- `RANK()` window function for public leaderboard ranking
+- Anonymity filter: anonymous donors excluded from public leaderboard
 
 ---
 
-## MongoDB Database — `unityfund`
+### Timezone Handling
 
-Connection: `mongodb://localhost:27017`
-Driver: raw `MongoDB\Driver\*` classes — no Composer needed.
-Helper file: `includes/mongo.php` (gitignored — copy from `includes/mongo.example.php`)
+All timestamps stored in **GMT+7 (Asia/Ho_Chi_Minh)**:
+```sql
+DEFAULT DATEADD(HOUR, 7, SYSUTCDATETIME())
+```
+SQL Server has no native timezone type. The app stores wall-clock local time and PHP converts using `new DateTimeZone('Asia/Ho_Chi_Minh')` where needed for display.
+
+---
+
+## 4. Database Design — MongoDB
+
+MongoDB stores **rich, variable-length, or nested content** that would be awkward in relational tables.
 
 ### Collections
 
-#### `user_profiles`
+#### user_profiles
 ```json
 {
-  "user_id":    1,          // matches Users.UserID in MS SQL
-  "bio":        "...",
-  "location":   "...",
-  "website":    "https://...",
-  "avatar_url": "assets/uploads/avatars/avatar_1_1234567890.jpg",
-  "joined_at":  ISODate,
-  "updated_at": ISODate
+  "user_id"    : 1,
+  "bio"        : "Passionate about tech causes.",
+  "avatar_url" : "assets/uploads/avatars/user_1.jpg",
+  "location"   : "Ho Chi Minh City",
+  "website"    : "https://example.com",
+  "joined_at"  : ISODate,
+  "updated_at" : ISODate
 }
 ```
+- Linked to SQL `Users` via `user_id`
+- Index: `user_id` (unique)
 
-#### `notifications`
+#### campaign_details
 ```json
 {
-  "to_user_id":   5,        // recipient UserID
-  "from_user_id": 1,        // sender UserID
-  "type":         "change_request",
-  "camp_id":      3,
-  "camp_title":   "Clean Water Initiative",
-  "change_type":  "name",   // 'name' | 'goal'
-  "message":      "Please rename your campaign...",
-  "read":         false,
-  "created_at":   ISODate
+  "camp_id"     : 1,
+  "description" : "Full rich description of the campaign...",
+  "banner"      : "assets/uploads/campaigns/banner_1.jpg",
+  "thumbnail"   : "assets/uploads/campaigns/thumb_1.jpg",
+  "updated_at"  : ISODate
 }
 ```
+- Linked to SQL `Campaigns` via `camp_id`
+- Index: `camp_id` (unique)
+- Images stored as file paths; files on disk under `assets/uploads/`
 
-#### `campaign_details`
-Reserved for future use — planned migration of campaign descriptions from MS SQL.
+#### comments
+```json
+{
+  "_id"        : ObjectId,
+  "camp_id"    : 1,
+  "user_id"    : 3,
+  "username"   : "Carol White",
+  "body"       : "Great initiative!",
+  "parent_id"  : null,
+  "created_at" : ISODate,
+  "edited_at"  : null
+}
+```
+- `parent_id: null` = top-level comment; `parent_id: ObjectId` = reply
+- Threaded tree assembled in PHP after a single flat fetch
+- Indexes: `camp_id`, `parent_id`, `created_at` (desc)
 
----
+#### organizer_applications
+```json
+{
+  "user_id"           : 5,
+  "legal_name"        : "Nguyen Van A",
+  "phone"             : "+84...",
+  "government_id_type": "CCCD",
+  "organization_name" : "Green Future VN",
+  "campaign_intent"   : "Environmental cleanup...",
+  "id_image_front"    : "assets/uploads/ids/...",
+  "id_image_back"     : "assets/uploads/ids/...",
+  "status"            : "pending",
+  "admin_decision_notes": "",
+  "decided_by"        : null,
+  "decided_at"        : null,
+  "submitted_at"      : ISODate
+}
+```
+- Stores full KYC-like application (15+ flexible fields)
+- `status`: `pending` → `approved` | `rejected`
+- Indexes: `user_id`, `status`, `submitted_at`
 
-## Key PHP Files
-
-### Entry Pages
-| File | Access | Purpose |
-|------|--------|---------|
-| `index.php` | Public | Browse active campaigns |
-| `login.php` | Public | Session login |
-| `register.php` | Public | New user registration; seeds MongoDB profile |
-| `donate.php` | Donor+ | Donation form |
-| `my_campaigns.php` | Organizer/Admin | Campaign management dashboard |
-| `top_donors.php` | Public | Top 100 donor leaderboard |
-| `profile.php` | Public* | User profile (`?id=X`); blocked if anonymous |
-| `inbox.php` | Logged in | Notification inbox for all users |
-| `partner/campaign/campaign-detail.php` | Public | Campaign detail + funding over time |
-
-*Anonymous profiles return 403 even if URL is known.
-
-### API Endpoints (`api/`)
-| File | Method | Auth | Purpose |
-|------|--------|------|---------|
-| `update_campaign.php` | POST | Organizer/Admin | Create or edit campaign |
-| `update_user_role.php` | POST | Admin | Approve/reject organizer applications |
-| `campaign_donations.php` | GET | Organizer/Admin | Donation list per campaign |
-| `update_profile.php` | POST | Self | Update bio, location, website, anonymous toggle |
-| `upload_avatar.php` | POST | Self | Upload avatar image (max 2MB, MIME validated) |
-| `request_change.php` | POST | Admin | Send change-request notification to organizer |
-| `search_users.php` | GET | Admin | Search users by email |
-| `mark_notifications_read.php` | POST | Self | Mark all or single notification as read |
-| `process_donation.php` | POST | Donor+ | Insert donation record |
-| `campaign_progress.php` | GET | Public | Campaign raised/goal stats |
-
-### Includes
-| File | Purpose |
-|------|---------|
-| `includes/auth.php` | Session helpers: `isLoggedIn()`, `isAdmin()`, `isOrganizer()`, `canDonate()`, `requireRole()`, `currentUser()` |
-| `includes/mongo.php` | MongoDB helpers: `getProfile()`, `saveProfile()`, `seedProfile()`, `getNotifications()`, `countUnreadNotifications()`, `markNotificationsRead()`, `markOneNotificationRead()`, `sendChangeRequest()` |
-| `includes/header.php` | Global nav; loads avatar + unread count from MongoDB on every request |
-| `includes/footer.php` | Closes layout |
-| `db.php` | MS SQL PDO connection (`$conn`) |
-
----
-
-## Role System
-
-| Role | Can Do |
-|------|--------|
-| `donor` | Browse, donate, view profiles, inbox |
-| `pending_organizer` | Same as donor while awaiting approval |
-| `organizer` | Above + create/edit own campaigns, view own donation history |
-| `admin` | Everything + approve campaigns, approve organizers, view all donors (including anonymous), search users by email, send change requests |
-
-Roles are stored in `Users.Role` and `$_SESSION['role']`.
-Auth checks are in `includes/auth.php` and enforced at the top of every protected page/API.
-
----
-
-## Privacy / Anonymous System
-
-Two levels of anonymity checked together everywhere:
-- `Donations.IsAnonymous` — per-donation flag set by donor at time of giving
-- `Users.IsAnonymous` — global toggle in profile settings
-
-**Rule:** if either is `1`, the donor is shown as Anonymous and DonorID is NULL.
-Applied in: `vw_DonationRunningTotal`, `vw_TopDonors`, `api/campaign_donations.php`.
-Admins bypass this — they see real names regardless.
-Anonymous profiles return HTTP 403 when visited via `profile.php?id=X`.
+#### notifications
+```json
+{
+  "to_user_id"   : 3,
+  "from_user_id" : 4,
+  "type"         : "role_change",
+  "old_role"     : "donor",
+  "new_role"     : "organizer",
+  "message"      : "Your role has been changed from Donor to Organizer. Reason: ...",
+  "read"         : false,
+  "created_at"   : ISODate
+}
+```
+- Types: `change_request`, `role_change`
+- Unread count displayed as badge in navbar
+- Indexes: `to_user_id`, `read`
 
 ---
 
-## Donation Flow (Current)
+## 5. Hybrid Database Strategy
+
+| Data | Store | Reason |
+|---|---|---|
+| Users, authentication | SQL Server | UNIQUE on email, bcrypt, JOIN capability |
+| Donations, amounts | SQL Server | Financial data needs ACID, CHECK constraints |
+| Receipts | SQL Server | Trigger-generated, FK integrity with Donations |
+| Transactions | SQL Server | Payment state machine, reliable status tracking |
+| Campaign metadata (title, goal, status) | SQL Server | Required for WHERE/GROUP BY/JOIN in queries |
+| User profiles (bio, avatar) | MongoDB | Variable-length, no financial implication |
+| Campaign rich content (description, images) | MongoDB | Binary-adjacent, flexible structure |
+| Comments | MongoDB | Threaded/nested, variable depth |
+| Organizer applications | MongoDB | 15+ fields, varies per applicant |
+| Notifications | MongoDB | Append-only, flexible payload per type |
+
+**The cross-database link** is always a plain integer (`user_id` / `camp_id`) that mirrors the SQL `IDENTITY` primary key. No DB-level foreign key across systems — the application enforces consistency.
+
+---
+
+## 6. User Roles & Permissions
+
+| Action | Guest | Donor | Pending Org | Organizer | Admin |
+|---|---|---|---|---|---|
+| Register / Login | Yes | — | — | — | — |
+| Browse campaigns | Yes | Yes | Yes | Yes | Yes |
+| Donate | No | Yes | Yes | Yes | Yes |
+| Apply as organizer | No | Yes | No | No | No |
+| Create campaign | No | No | No | Yes | Yes |
+| Admin dashboard | No | No | No | No | Yes |
+| Change user roles | No | No | No | No | Yes |
+| Approve campaigns | No | No | No | No | Yes |
+
+### Role Lifecycle
+```
+Register → donor
+donor → applies → pending_organizer
+pending_organizer → admin approves → organizer
+pending_organizer → admin rejects  → donor
+any user → admin can change to any role (with reason + notification sent)
+```
+
+### Auth Implementation (`includes/auth.php`)
+- Session-based: `$_SESSION['user_id']`, `$_SESSION['role']`
+- `requireLogin()` — redirects to login with return URL
+- `requireRole(['admin'])` — guards admin-only pages; redirects on failure
+
+---
+
+## 7. Payment Flow (Stripe)
 
 ```
-donate.php → POST → api/process_donation.php
-                          │
-                    INSERT INTO Donations
-                          │
-                    trg_GenerateTaxReceipt fires
-                          │ (if Amt > 50)
-                    INSERT INTO Receipts
+1. User selects campaign + amount on donate.php
+        │
+2. POST → api/create_payment_intent.php
+        │  Creates Stripe PaymentIntent server-side
+        │  Inserts Transactions row (status=pending, GatewayRef=pi_xxx)
+        │
+3. Stripe Elements collects card (card data never touches our server)
+        │
+4. JS confirms PaymentIntent → Stripe processes
+        │
+5. POST → api/confirm_payment.php
+        │  Verifies intent with Stripe server-side
+        │  Updates Transactions (status=success, ProcessedAt=now)
+        │  Inserts Donations row
+        │  DB Trigger fires → Receipts row if Amt > $50
+        │
+6. Redirect → payment_success.php?ref=pi_xxx
+        │  Queries by GatewayRef + UserID (prevents spoofing)
+        │  Shows tax receipt if generated
 ```
 
-## Planned Enhancement — Payment Gateway
+### Test Cards (Stripe Sandbox)
+| Card Number | Behavior |
+|---|---|
+| `4242 4242 4242 4242` | Payment succeeds |
+| `4000 0000 0000 0002` | Card declined |
+| `4000 0000 0000 9995` | Insufficient funds |
+| `4000 0025 0000 3155` | 3DS required → succeeds |
+| `4000 0000 0000 9987` | 3DS required → fails |
 
-Add a `Transactions` table as a middle layer:
-```
-donate.php → POST card details → Stripe Sandbox API
-                                        │
-                              Stripe returns success/fail
-                                        │
-                         INSERT Transactions (status = success/failed)
-                                        │
-                              if success only:
-                         INSERT Donations → trigger → Receipts
-```
-Stripe Connect is the target architecture:
-- Platform account = UnityFund
-- Connected accounts = Organizers (receive payouts)
-- Customer objects = Donors (stored cards)
+Use any future expiry (e.g. `12/26`), any 3-digit CVC, any ZIP.
 
 ---
 
-## Avatar Upload
-- Stored at `assets/uploads/avatars/avatar_{userID}_{timestamp}.ext`
-- MIME type validated server-side via `mime_content_type()` (not extension)
-- Max 2MB
-- Old avatar files deleted on new upload
-- URL saved to MongoDB `user_profiles.avatar_url`
+## 8. File & Module Structure
+
+```
+unityfund/
+├── index.php                   # Discover — campaign listing with filter/search
+├── donate.php                  # Donation page — Stripe Elements UI
+├── payment_success.php         # Post-payment receipt confirmation
+├── transactions.php            # Transaction history (donor + admin)
+├── receipts.php                # Tax receipt listing
+├── running_total.php           # Live running total widget (used in campaign-detail)
+├── top_donors.php              # Public donor leaderboard
+├── inbox.php                   # In-app notifications
+├── profile.php                 # User profile (view + edit own)
+├── apply_organizer.php         # Organizer KYC application form
+├── my_campaigns.php            # Organizer campaign management
+├── admin.php                   # Admin dashboard (standalone, dark theme)
+├── login.php / register.php / logout.php
+│
+├── api/                        # JSON API endpoints (called via fetch())
+│   ├── create_payment_intent.php   # Stripe intent creation
+│   ├── confirm_payment.php         # Stripe confirmation + donation insert
+│   ├── process_donation.php        # Core donation recording
+│   ├── update_campaign.php         # Create/update campaign
+│   ├── update_user_role.php        # Admin role change + notification
+│   ├── campaign_donations.php      # Donation list for a campaign
+│   ├── campaign_progress.php       # Live progress bar data
+│   ├── campaign_comments.php       # Add/fetch campaign comments
+│   ├── upload_campaign_image.php   # Banner + thumbnail upload
+│   ├── upload_avatar.php           # Profile avatar upload
+│   ├── upload_id_photo.php         # Organizer ID document upload
+│   ├── request_change.php          # Admin → organizer change request
+│   ├── mark_notifications_read.php
+│   └── search_users.php
+│
+├── partner/
+│   ├── campaign/campaign-detail.php   # Full public campaign page
+│   └── home/index.php
+│
+├── includes/
+│   ├── auth.php           # Session auth helpers + role guards
+│   ├── mongo.php          # MongoDB raw driver helpers (gitignored)
+│   ├── mongo.example.php  # Safe template for repo
+│   ├── stripe.php         # Stripe key config (gitignored)
+│   ├── header.php         # Shared Bootstrap navbar
+│   ├── footer.php         # Shared footer
+│   └── time.php           # Timezone / date helpers
+│
+├── assets/
+│   ├── css/app.css        # Custom design system styles
+│   └── uploads/           # User uploads (gitignored)
+│
+├── schema.sql             # Full MS SQL Server schema + sample data
+├── schema_mongo.php       # MongoDB collection + index setup
+└── timezone_gmt7_mssql.sql
+```
 
 ---
 
-## Notification / Inbox System
-- Stored in MongoDB `notifications` collection
-- Currently sent by: admin → organizer via "Request Change" in admin dashboard
-- All logged-in users have an inbox (`inbox.php`)
-- Header shows unread count badge via `countUnreadNotifications()`
-- Mark single or all as read via `api/mark_notifications_read.php`
+## 9. Key Features
+
+### Admin Dashboard
+- Standalone dark-themed page, no shared layout
+- **6 panels:** Overview, Campaigns, Applications, Users, Transactions, Receipts
+- Overview: real monthly bar chart (last 7 months from DB), donut chart, KPI cards
+- Campaigns: thumbnail, progress bar, status filters, one-click approve/reject/close
+- Applications: full KYC review with ID photos, notes, approve/reject
+- Users: role filter, search, change any user's role with confirmation modal + mandatory reason
+- Transactions / Receipts: full financial audit view
+
+### Campaign Approval Workflow
+```
+Organizer creates → pending → Admin reviews → active (public) or closed (rejected)
+```
+
+### Anonymity System
+- Per-user global flag and per-donation flag
+- Logic enforced at SQL view level, not just PHP — consistent across all queries
+- Anonymous donors show as "Anonymous" everywhere including leaderboards
+
+### Tax Receipt System
+- Database trigger auto-fires on any donation > $50
+- Tax deductible = 10% of donation amount
+- Visible immediately on payment success page
+- Downloadable/printable from receipts page
+
+### Organizer Application (KYC)
+- Multi-field form: legal name, DOB, ID type, organization, campaign intent
+- ID photo front/back upload
+- Admin reviews full application in dashboard
+- Decision notes written back to MongoDB document; user notified in inbox
 
 ---
 
-## What Is NOT Yet Done
-- Payment gateway integration (Stripe sandbox — planned)
-- `Transactions` table (pending gateway implementation)
-- Migration of campaign descriptions from MS SQL → MongoDB `campaign_details`
-- `running_total.php` still exists on disk (gitignored, safe to delete)
+## 10. Security Considerations
+
+| Threat | Mitigation |
+|---|---|
+| SQL Injection | All queries use PDO prepared statements (`?` placeholders) |
+| XSS | All output wrapped in `htmlspecialchars()` |
+| Broken Access Control | `requireRole()` guard at top of every protected page |
+| IDOR | Transaction lookups filter by `UserID` — users can't see others' data |
+| Credential exposure | `db.php`, `mongo.php`, `stripe.php` in `.gitignore` |
+| Payment data exposure | Card data never touches our server (Stripe Elements) |
+| Mass assignment | API endpoints whitelist allowed fields explicitly |
+| Admin self-lockout | Role change API prevents admin changing their own role |
+| Bcrypt | Passwords hashed with `password_hash($pw, PASSWORD_BCRYPT)` |
+
+---
+
+## 11. Testing Checklist
+
+### Authentication
+- [ ] Register as new donor; login; logout
+- [ ] Access `/admin.php` as donor → redirected to index
+- [ ] Access `/admin.php` as admin → dashboard loads
+
+### Donation & Payment
+- [ ] Donate with `4242 4242 4242 4242` → success page shown
+- [ ] Donate $60 → tax receipt badge appears on success page
+- [ ] Donate $30 → "Donations over $50 qualify" info shown
+- [ ] Declined card `4000 0000 0000 0002` → failure state shown
+- [ ] Visit `payment_success.php?ref=fake123` → "No transaction found"
+
+### Campaign Management
+- [ ] Organizer creates campaign → appears as pending in admin
+- [ ] Admin approves → campaign appears on discover page
+- [ ] Admin filter pill "Pending" shows only pending campaigns
+
+### Role Management
+- [ ] Admin opens User row → Role dropdown visible
+- [ ] Click role option → confirmation modal opens with correct names
+- [ ] Submit without reason → textarea highlighted, blocked
+- [ ] Submit with reason → role updated; affected user sees inbox notification
+
+### Admin Charts
+- [ ] Overview bar chart reflects actual monthly donations (all bars may be April if data is new)
+- [ ] Donut chart numbers match campaigns panel counts
+
+---
+
+## 12. Presentation Talking Points
+
+### Why Two Databases?
+> "We chose a hybrid approach: MS SQL Server for anything relational — users, donations, transactions — where we need foreign keys, constraints, and JOINs. MongoDB handles content that's flexible or nested — profile bios, rich campaign descriptions, threaded comments, KYC applications. The two systems link through a shared integer ID, with the application layer enforcing cross-database consistency."
+
+### Why a Trigger for Receipts?
+> "The tax receipt rule is a business requirement that must never be bypassed. Implementing it as a SQL Server trigger means it fires at the data layer automatically — even if a developer forgets to call the PHP function, or if data is inserted by another tool. It's enforced at the lowest possible level."
+
+### Why Window Functions in Views?
+> "The running total view uses `SUM() OVER (PARTITION BY CampID ORDER BY Time)` to compute a cumulative donation total per campaign in a single query — no self-joins, no subqueries. The leaderboard uses `RANK() OVER (ORDER BY TotalDonated DESC)`. These are standard SQL analytics that demonstrate the power of modern relational databases."
+
+### Why Stripe Sandbox?
+> "Stripe test mode gives us a complete, realistic payment environment — successful charges, declined cards, 3D Secure authentication flows — without real money. The integration is production-ready; switching to live mode is just a config key change. For academic purposes, sandbox is the correct and professional choice."
+
+### What Would You Add in Production?
+- Stripe webhook endpoint to handle async events (tab-close edge case)
+- Email notifications via SendGrid alongside in-app inbox
+- Image CDN (Cloudinary) instead of local disk uploads
+- Rate limiting on API endpoints (prevent donation spam)
+- Full admin audit log table recording all admin actions with timestamps
+
+---
+
+*Document generated: April 2026*
+*Repository: github.com/Bontori1987/unityFund — branch: thin*

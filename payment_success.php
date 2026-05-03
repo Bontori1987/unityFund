@@ -187,8 +187,8 @@ $failed    = $tx && $tx['Status'] === 'failed';
                 <div>
                     <div class="fw-semibold text-success small">Tax Receipt Generated</div>
                     <div class="text-muted small">
-                        Deductible amount: <strong>$<?= number_format((float)$receipt['TaxAmount'], 2) ?></strong>
-                        (10% of donation)
+                        Your full donation of <strong>$<?= number_format((float)$receipt['TaxAmount'], 2) ?></strong>
+                        is tax-deductible. No amount was deducted from your donation.
                     </div>
                     <a href="receipts.php" class="small text-success fw-semibold text-decoration-none">
                         View receipt &rarr;

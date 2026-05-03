@@ -2,6 +2,7 @@
 require_once 'includes/auth.php';
 require_once 'db.php';
 require_once 'includes/mongo.php';
+require_once 'includes/stripe.php';
 
 $viewId   = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 $me       = isLoggedIn() ? currentUser() : null;
@@ -53,6 +54,21 @@ try {
     $sStmt->execute([$targetId]);
     $stats = $sStmt->fetch(PDO::FETCH_ASSOC) ?: $stats;
 } catch (PDOException $e) {}
+
+// Fetch Stripe Connect status for organizers
+$stripeAccount = ['account_id' => '', 'onboarded' => false];
+$isOrg = in_array($sqlUser['Role'], ['organizer', 'admin']);
+if ($isOrg) {
+    $stripeAccount = getStripeAccount($targetId);
+    // Re-verify with Stripe if account exists but not marked onboarded
+    if ($stripeAccount['account_id'] !== '' && !$stripeAccount['onboarded']) {
+        $acct = stripeRetrieveAccount($stripeAccount['account_id']);
+        if (!isset($acct['error']) && ($acct['charges_enabled'] ?? false)) {
+            markStripeOnboarded($targetId);
+            $stripeAccount['onboarded'] = true;
+        }
+    }
+}
 
 $pageTitle = $isOwnProfile ? 'My Profile' : htmlspecialchars($sqlUser['Username']) . "'s Profile";
 $basePath  = '';
@@ -275,6 +291,94 @@ document.getElementById('save-btn').addEventListener('click', async () => {
         btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Save changes';
     }
 });
+</script>
+<?php endif; ?>
+
+<?php if ($isOrg && $isOwnProfile): ?>
+<!-- Stripe Connect section -->
+<div class="container pb-5" style="max-width:720px;">
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-4">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-3">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="d-flex align-items-center justify-content-center rounded-3"
+                         style="width:48px;height:48px;background:#f0fdf4;flex-shrink:0;">
+                        <i class="bi bi-stripe text-success" style="font-size:1.5rem;"></i>
+                    </div>
+                    <div>
+                        <div class="fw-bold mb-1">Stripe Payouts</div>
+                        <?php if ($stripeAccount['onboarded']): ?>
+                        <span class="badge bg-success px-3 py-1">
+                            <i class="bi bi-check-circle me-1"></i>Connected
+                        </span>
+                        <div class="text-muted small mt-1">
+                            Donations to your campaigns transfer directly to your Stripe account.
+                            UnityFund retains a 5% platform fee.
+                        </div>
+                        <?php elseif ($stripeAccount['account_id'] !== ''): ?>
+                        <span class="badge bg-warning text-dark px-3 py-1">
+                            <i class="bi bi-clock me-1"></i>Onboarding Incomplete
+                        </span>
+                        <div class="text-muted small mt-1">
+                            Please complete your Stripe setup to receive donations directly.
+                        </div>
+                        <?php else: ?>
+                        <span class="badge bg-secondary px-3 py-1">Not connected</span>
+                        <div class="text-muted small mt-1">
+                            Connect Stripe to receive campaign donations directly into your bank account.
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div>
+                    <?php if ($stripeAccount['onboarded']): ?>
+                    <a href="https://dashboard.stripe.com" target="_blank"
+                       class="btn btn-outline-success btn-sm px-4">
+                        <i class="bi bi-box-arrow-up-right me-1"></i>Stripe Dashboard
+                    </a>
+                    <?php else: ?>
+                    <button class="btn btn-success btn-sm px-4 fw-semibold" id="stripe-connect-btn"
+                            onclick="connectStripe()">
+                        <i class="bi bi-lightning-fill me-1"></i>
+                        <?= $stripeAccount['account_id'] !== '' ? 'Resume Setup' : 'Connect Stripe' ?>
+                    </button>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <?php if ($stripeAccount['onboarded']): ?>
+            <div class="mt-3 pt-3 border-top d-flex gap-4 text-muted small">
+                <span><i class="bi bi-info-circle me-1"></i>Account ID: <code><?= htmlspecialchars($stripeAccount['account_id']) ?></code></span>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+</div>
+
+<script>
+async function connectStripe() {
+    const btn = document.getElementById('stripe-connect-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Redirecting…';
+    try {
+        const data = await fetch('api/stripe_connect.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        }).then(r => r.json());
+        if (data.success) {
+            window.location.href = data.url;
+        } else {
+            alert('Error: ' + (data.error || 'Could not connect Stripe'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-lightning-fill me-1"></i>Connect Stripe';
+        }
+    } catch {
+        alert('Network error. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-lightning-fill me-1"></i>Connect Stripe';
+    }
+}
 </script>
 <?php endif; ?>
 

@@ -76,12 +76,13 @@ BEGIN
     SET NOCOUNT ON;
 
     -- For every newly inserted row where Amt > 50, create one receipt.
-    -- TaxAmount = 10% of the donation (tax-deductible portion).
+    -- TaxAmount = full donation amount (the entire donation is tax-deductible).
+    -- No money is deducted — this is a document for the donor's tax records only.
     INSERT INTO Receipts (DonID, IssuedAt, TaxAmount)
     SELECT
         i.ID,
         DATEADD(HOUR, 7, SYSUTCDATETIME()),
-        ROUND(i.Amt * 0.10, 2)
+        i.Amt
     FROM INSERTED i
     WHERE i.Amt > 50;
 END;

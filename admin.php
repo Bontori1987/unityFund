@@ -107,6 +107,18 @@ try {
     )->fetchAll(PDO::FETCH_ASSOC);
 } catch(PDOException $e) {}
 
+// ── Stripe Connect status for all organizers ──────────────────────────────────
+$stripeStatusMap = [];
+try {
+    $orgIds = array_column(
+        array_filter($allUsers, fn($u) => in_array($u['Role'], ['organizer', 'admin'])),
+        'UserID'
+    );
+    foreach ($orgIds as $oid) {
+        $stripeStatusMap[(int)$oid] = getStripeAccount((int)$oid);
+    }
+} catch (Exception $e) {}
+
 // ── All transactions (for Transactions panel) ────────────────────────────────
 $transactions = [];
 try {
@@ -2030,7 +2042,26 @@ html, body {
                         </div>
                     </div>
                 </td>
-                <td style="color:var(--text-muted);font-size:.79rem;"><?= htmlspecialchars($u['Email']) ?></td>
+                <td style="font-size:.79rem;">
+                    <div style="color:var(--text-muted);"><?= htmlspecialchars($u['Email']) ?></div>
+                    <?php
+                    $sInfo = $stripeStatusMap[(int)$u['UserID']] ?? null;
+                    if ($sInfo):
+                        if ($sInfo['onboarded']):
+                    ?>
+                    <span style="font-size:.62rem;padding:2px 7px;border-radius:99px;background:var(--accent-dim);color:var(--accent);font-weight:600;display:inline-flex;align-items:center;gap:3px;margin-top:3px;">
+                        <i class="bi bi-stripe"></i> Stripe Connected
+                    </span>
+                    <?php elseif ($sInfo['account_id'] !== ''): ?>
+                    <span style="font-size:.62rem;padding:2px 7px;border-radius:99px;background:var(--amber-dim);color:var(--amber);font-weight:600;display:inline-flex;align-items:center;gap:3px;margin-top:3px;">
+                        <i class="bi bi-stripe"></i> Setup Incomplete
+                    </span>
+                    <?php else: ?>
+                    <span style="font-size:.62rem;padding:2px 7px;border-radius:99px;background:rgba(100,116,139,.12);color:#94a3b8;font-weight:600;display:inline-flex;align-items:center;gap:3px;margin-top:3px;">
+                        <i class="bi bi-stripe"></i> Not Connected
+                    </span>
+                    <?php endif; endif; ?>
+                </td>
                 <td>
                     <span style="font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:99px;<?= $roleStyle ?>">
                         <?= $roleLabel ?>
@@ -2266,7 +2297,7 @@ html, body {
     <div class="page-head">
         <div>
             <h1 class="page-title">Tax Receipts</h1>
-            <p class="page-sub">Auto-issued for donations over $50 &mdash; 10% deductible.</p>
+            <p class="page-sub">Auto-issued for donations over $50 &mdash; full donation amount is tax-deductible. No fees deducted.</p>
         </div>
     </div>
 
@@ -2290,7 +2321,7 @@ html, body {
             <div class="kpi-icon-wrap ic-purple" style="width:36px;height:36px;font-size:.95rem;margin-bottom:10px;">
                 <i class="bi bi-shield-check"></i>
             </div>
-            <div class="kpi-val" style="font-size:1.4rem;">10%</div>
+            <div class="kpi-val" style="font-size:1.4rem;">100%</div>
             <div class="kpi-label">Deductible Rate</div>
         </div>
     </div>

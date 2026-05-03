@@ -71,7 +71,7 @@ require_once 'includes/header.php';
 
     <div class="mb-4">
         <h1 class="fw-bold mb-1"><?= $isAdmin ? 'All Receipts' : 'My Receipts' ?></h1>
-        <p class="text-muted">Tax receipts are auto-generated for donations over $50 (10% deductible).</p>
+        <p class="text-muted">Tax receipts are auto-generated for donations over $50. No amount is deducted — this document confirms your donation is tax-deductible.</p>
     </div>
 
     <?php if (!empty($dbError)): ?>
@@ -96,7 +96,7 @@ require_once 'includes/header.php';
                             <?php if ($isAdmin): ?><th>Donor</th><?php endif; ?>
                             <th>Campaign</th>
                             <th>Donation</th>
-                            <th>Tax-Deductible (10%)</th>
+                            <th>Tax-Deductible Amount</th>
                             <th>Issued</th>
                         </tr>
                     </thead>

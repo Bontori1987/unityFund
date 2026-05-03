@@ -98,7 +98,7 @@ require_once 'includes/header.php';
                        class="form-control" min="1" step="0.01"
                        placeholder="Or enter custom amount" required>
                 <div id="receiptHint" class="form-text">
-                    Donations over $50 automatically generate a tax receipt (10% deductible).
+                    Donations over $50 automatically generate a tax receipt for your records.
                 </div>
             </div>
 
@@ -167,8 +167,8 @@ document.getElementById('amount').addEventListener('input', function () {
     hint.classList.toggle('text-success', over);
     hint.classList.toggle('fw-semibold', over);
     hint.textContent = over
-        ? '✓ A tax receipt will be generated automatically (10% deductible).'
-        : 'Donations over $50 automatically generate a tax receipt (10% deductible).';
+        ? '✓ A tax receipt will be generated automatically for your records.'
+        : 'Donations over $50 automatically generate a tax receipt for your records.';
 });
 
 // Campaign progress
