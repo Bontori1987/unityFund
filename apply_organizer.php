@@ -2,6 +2,7 @@
 require_once 'includes/auth.php';
 require_once 'db.php';
 require_once 'includes/mongo.php';
+require_once 'includes/mail.php';
 
 requireLogin('apply_organizer.php');
 
@@ -98,11 +99,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $role === 'donor') {
                 $_SESSION['role'] = 'pending_organizer';
                 unset($_SESSION['organizer_id_image_front'], $_SESSION['organizer_id_image_back']);
                 $role = 'pending_organizer';
-                $success = 'Application submitted. An admin will review it before you can create campaigns.';
+                $success = 'Application submitted. An admin will review it first. After approval, you must connect Stripe before creating campaigns.';
                 $latestApplication = getLatestOrganizerApplication($userId);
+
+                try {
+                    $admins = $conn->query("SELECT Username, Email FROM Users WHERE Role = 'admin'")->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($admins as $admin) {
+                        $adminEmail = trim((string)($admin['Email'] ?? ''));
+                        if ($adminEmail === '') continue;
+                        sendOrganizerApplicationNoticeToAdmin(
+                            $adminEmail,
+                            (string)($admin['Username'] ?? 'Admin'),
+                            $payload['legal_name'],
+                            $payload['focus_category'],
+                            $payload['estimated_goal_range']
+                        );
+                }
+                } catch (PDOException $mailEx) {
+                    error_log('Admin organizer application email failed: ' . $mailEx->getMessage());
+                }
             }
         } catch (PDOException $e) {
-            $error = 'Application saved, but your role could not be updated. Please contact an admin.';
+            deleteOrganizerApplication($userId);
+            $error = 'Application could not be completed due to a database error. Please try again.';
         }
     }
 }
@@ -139,7 +158,7 @@ require_once 'includes/header.php';
     <div class="card border-0 shadow-sm">
         <div class="card-body p-4">
             <h5 class="fw-bold mb-2">You are already an organizer.</h5>
-            <p class="text-muted mb-3">You can create and manage campaigns from your dashboard.</p>
+            <p class="text-muted mb-3">You can create and manage campaigns from your dashboard. Stripe must be connected before submitting a new campaign.</p>
             <a href="my_campaigns.php" class="btn btn-success">Open dashboard</a>
         </div>
     </div>

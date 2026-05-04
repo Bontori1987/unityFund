@@ -76,13 +76,13 @@ BEGIN
     SET NOCOUNT ON;
 
     -- For every newly inserted row where Amt > 50, create one receipt.
-    -- TaxAmount = full donation amount (the entire donation is tax-deductible).
+    -- TaxAmount = 10% of the donation (tax-deductible portion).
     -- No money is deducted — this is a document for the donor's tax records only.
     INSERT INTO Receipts (DonID, IssuedAt, TaxAmount)
     SELECT
         i.ID,
         DATEADD(HOUR, 7, SYSUTCDATETIME()),
-        i.Amt
+        ROUND(i.Amt * 0.10, 2)
     FROM INSERTED i
     WHERE i.Amt > 50;
 END;
@@ -115,7 +115,7 @@ SELECT
         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS RunningTotal,
     -- Rank each donation within its campaign by size
-    RANK() OVER (
+    DENSE_RANK() OVER (
         PARTITION BY d.CampID
         ORDER BY d.Amt DESC
     ) AS RankInCampaign
@@ -150,7 +150,7 @@ SELECT
     TotalDonated,
     DonationCount,
     LastDonation,
-    RANK() OVER (ORDER BY TotalDonated DESC) AS OverallRank
+    DENSE_RANK() OVER (ORDER BY TotalDonated DESC) AS OverallRank
 FROM DonorTotals;
 GO
 

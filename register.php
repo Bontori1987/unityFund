@@ -2,6 +2,7 @@
 require_once 'includes/auth.php';
 require_once 'db.php';
 require_once 'includes/mongo.php';
+require_once 'includes/mail.php';
 
 if (isLoggedIn()) {
     header('Location: donate.php');
@@ -23,6 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'All fields are required.';
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = 'Invalid email address.';
+    } elseif (!preg_match('/@gmail\.com$/i', $email)) {
+        $error = 'Registration requires a Gmail address.';
     } elseif (strlen($password) < 6) {
         $error = 'Password must be at least 6 characters.';
     } elseif ($password !== $confirm) {
@@ -43,6 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($newId > 0) {
                     seedProfile($newId);
                 }
+
+                $roleLabel = $wantsOrganizer ? 'Donor account with organizer interest' : 'Donor';
+                sendWelcomeEmail($email, $username, $roleLabel);
 
                 $success = $wantsOrganizer
                     ? 'Account created! Sign in, then complete the organizer application form for admin review.'
@@ -128,7 +134,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <label class="form-label fw-semibold small">Email</label>
                 <input type="email" name="email" class="form-control"
                        value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
-                       placeholder="you@example.com" required>
+                       placeholder="you@gmail.com" required>
+                <div class="form-text">UnityFund uses Gmail for password recovery, OTP verification, and admin notices.</div>
             </div>
             <div class="mb-3">
                 <label class="form-label fw-semibold small">

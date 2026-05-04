@@ -1,171 +1,207 @@
 # UnityFund
 
-A charity crowdfunding web application built for an Advanced Database Systems course project. UnityFund connects donors with fundraising campaigns, featuring real-time donation tracking, automated tax receipts via SQL triggers, and leaderboards powered by SQL window functions.
+UnityFund is a fundraising platform built with PHP, SQL Server, MongoDB, Stripe Connect, and Gmail-based email delivery.
 
----
+## Current architecture
 
-## Team & Responsibilities
+- **MS SQL Server**
+  - Users
+  - Campaigns
+  - Donations
+  - Transactions
+  - Receipts
+- **MongoDB**
+  - User profiles
+  - Campaign descriptions and images
+  - Threaded campaign comments
+  - Organizer applications
+  - In-app notifications
+  - Email OTP challenges
+  - Password reset tokens
+- **Stripe Connect**
+  - Platform collects donor payments
+  - Platform fee: **5%**
+  - Connected organizer accounts receive the rest
+- **Gmail SMTP via PHPMailer**
+  - Password reset email
+  - Donation OTP
+  - Campaign close OTP
+  - Admin decision / change-request emails
+  - Organizer application notice to admins
+  - Welcome email on registration
 
-| Member | Responsibility |
-|--------|---------------|
-| **Thinh** | Donation UI, top donors, receipts, SQL trigger, window functions|
-| **Nhi** | Campaign content management, image gallery, campaign detail page |
-| *(planned)* | MongoDB — threaded comments, user profiles, campaign metadata |
+## Major flows
 
----
+### 1. Registration
 
-## Database Architecture
+- Registration requires a **Gmail address**
+- New users are created as `donor`
+- A welcome email is sent after successful registration
 
-The project uses three databases, each suited to its data type:
+### 2. Organizer application
 
-| Database | Role | Status |
-|----------|------|--------|
-| **MS SQL Server** | Transactional data — users, donations, receipts, campaigns | ✅ Implemented |
-| **MongoDB** | Document store — threaded comments, user profiles, campaign details (read-heavy, rarely updated) | 🔜 Planned |
-| **MySQL** | *(removed — campaign data migrated to MS SQL)* | — |
+- Donor submits organizer application in `apply_organizer.php`
+- Application is stored in MongoDB
+- User role becomes `pending_organizer`
+- Every admin email stored in the `Users` table receives a notice
+- Admin approves or rejects in the dashboard
+- Approval sends:
+  - inbox notification
+  - email notice
+  - Stripe-required reminder
 
-> MongoDB is planned but not yet integrated. The `Campaigns` table in MS SQL currently stores title, description, category, goal, and status as a temporary measure until the MongoDB layer is built.
+### 3. Stripe organizer onboarding
 
----
+- After approval, organizer must connect Stripe before creating campaigns
+- In sandbox mode, the app can fast-track connected account creation for demo use
+- In live mode, standard Stripe onboarding still applies
 
-## Features
+### 4. Donation flow
 
-- **Kickstarter-style landing page** — campaign cards with category filters and search
-- **Role-based access control** — Guest, Donor, Pending Organizer, Organizer, Admin
-- **Donation flow** — campaign selection, preset amounts, anonymous giving
-- **Auto tax receipts** — SQL `AFTER INSERT` trigger generates receipts for donations > $50
-- **Running totals** — `SUM() OVER (PARTITION BY CampID ORDER BY Time)` window function
-- **Top donors leaderboard** — `RANK() OVER (ORDER BY TotalDonated DESC)` window function
-- **Admin dashboard** — approve organizer applications, manage campaign status
-- **Campaign detail page** — full stats sidebar with MS SQL donation data
+- Donor selects campaign and amount
+- Donor must verify a **Gmail OTP**
+- App creates a Stripe PaymentIntent
+- If organizer has a connected Stripe account:
+  - donor pays the **platform**
+  - platform keeps **5% application fee**
+  - organizer connected account receives the campaign payout
 
----
+### 5. Password recovery
 
-## Tech Stack
+- `forgot_password.php` sends a reset link to the registered Gmail address
+- `reset_password.php` validates a MongoDB reset token and updates the SQL password hash
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Bootstrap 5.3, Bootstrap Icons, Inter font |
-| Backend | PHP 8+ |
-| Primary DB | Microsoft SQL Server (T-SQL) via PDO `sqlsrv` driver |
-| Document DB | MongoDB *(planned — comments, profiles, campaign details)* |
+### 6. Organizer campaign close
 
----
+- Organizer can close their own **active** campaign
+- Closing requires a Gmail OTP
+- Admin can still close or reactivate campaigns directly
 
-## Project Structure
+## Email features
 
-```
-unityfund/
-├── api/                        # JSON endpoints (AJAX)
-│   ├── campaign_donations.php
-│   ├── campaign_progress.php
-│   ├── process_donation.php
-│   ├── update_campaign.php
-│   └── update_user_role.php
-├── assets/
-│   ├── css/app.css             # Brand design system (Bootstrap overrides)
-│   ├── js/app.js               # Shared JS utilities
-│   ├── logo.jpg
-│   └── uploads/                # User-uploaded images (gitignored)
-├── includes/
-│   ├── auth.php                # Session helpers & role functions
-│   ├── header.php              # Unified navbar (Bootstrap 5)
-│   └── footer.php              # Footer + Bootstrap JS
-├── partner/                    # Teammate's campaign content pages
-│   ├── campaign/campaign-detail.php
-│   └── home/index.php
-├── index.php                   # Landing page (category browse)
-├── donate.php                  # Donation form
-├── top_donors.php              # Leaderboard
-├── receipts.php                # Tax receipts & donation history
-├── running_total.php           # Window function visualisation
-├── my_campaigns.php            # Organizer & admin dashboard
-├── login.php
-├── register.php
-├── logout.php
-├── schema.sql                  # Full MS SQL schema + trigger + views + migrations
-├── db.example.php              # Credential template (copy → db.php)
-└── .gitignore
-```
+Implemented with **PHPMailer** using Gmail SMTP.
 
----
+Current email use cases:
 
-## Setup
+- welcome email on account creation
+- forgot password / reset password
+- donor OTP before payment
+- organizer OTP before closing active campaign
+- admin change request to organizer
+- organizer application approval / rejection
+- new organizer application notice to admins
 
-### 1. Database (MS SQL Server)
+## Local configuration
 
-1. Create a database named `UnityFindDB` in SQL Server Management Studio.
-2. Run `schema.sql` — creates tables, trigger, views, and sample data.
-3. The migration blocks at the bottom of `schema.sql` safely add `Category` and `Description` columns to existing databases without data loss.
+### 1. SQL Server
 
-### 2. Database credentials
+Create `db.php` from your local credentials.
 
-```bash
-cp db.example.php db.php
-```
+This file is ignored by git.
 
-Edit `db.php` and fill in your SQL Server name, username, and password.
+### 2. MongoDB
 
-### 3. Test accounts
+Create or edit:
 
-Test accounts are seeded automatically when you run `schema.sql` — no extra steps needed.
+- `includes/mongo.php`
 
-| Email | Password | Role |
-|-------|----------|------|
-| alice@example.com | donor123 | Donor |
-| bob@example.com | donor456 | Donor |
-| carol@example.com | donor789 | Donor |
-| host@example.com | org123 | Organizer |
-| admin@unityfund.com | admin123 | Admin |
+Expected local database:
 
-**Existing database only** — if you already have the tables and need to fix the passwords, run this in SSMS:
+- database name: `unityfund`
 
-```sql
-UPDATE Users SET Password = '$2y$10$KY4GnyJG7LduYNztxucH8.BkLcoFxeKwOCRlP/DqWne7rzmJK5YDO' WHERE Email = 'alice@example.com';
-UPDATE Users SET Password = '$2y$10$gvck5Cwl.yI2ELMpE80U7.rp42D5jH5NdJHhkO1Ceh4HpTgEzfYkC' WHERE Email = 'bob@example.com';
-UPDATE Users SET Password = '$2y$10$jyNQtHBAXhYcrfij/P/J7uH5LhTfIZIi0cffLmXrLrDH8/8JJvNpK' WHERE Email = 'carol@example.com';
-UPDATE Users SET Password = '$2y$10$U0imT1oxpZ8kc7oSTL1im.rkLwbVjZ7FlZFK6Rmiu4eDgO/uAClL6' WHERE Email = 'admin@unityfund.com';
-UPDATE Users SET Password = '$2y$10$cUQvXVcTOGegTkW4A.9boOnCKClrOPJCMJEcxECT0LEVaQeoQ4TMW' WHERE Email = 'host@example.com';
-```
+### 3. Stripe
 
----
+Local Stripe configuration is loaded from:
 
-## Key SQL Features
+- `includes/stripe.php`
+- optional local override: `includes/stripe.local.php`
 
-### Trigger — auto tax receipt
-```sql
-CREATE TRIGGER trg_GenerateTaxReceipt
-ON Donations AFTER INSERT AS
-BEGIN
-    INSERT INTO Receipts (DonID, IssuedAt, TaxAmount)
-    SELECT i.ID, GETDATE(), ROUND(i.Amt * 0.10, 2)
-    FROM INSERTED i WHERE i.Amt > 50;
-END;
-```
+### 4. Gmail SMTP
 
-### Window function — running total
-```sql
-SUM(d.Amt) OVER (
-    PARTITION BY d.CampID
-    ORDER BY d.Time
-    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-) AS RunningTotal
+Tracked example:
+
+- `includes/mail.example.php`
+
+Local secret file:
+
+- `includes/mail.local.php`
+
+This file is ignored by git.
+
+Example structure:
+
+```php
+<?php
+define('MAIL_SMTP_HOST', 'smtp.gmail.com');
+define('MAIL_SMTP_PORT', 587);
+define('MAIL_SMTP_SECURE', 'tls');
+define('MAIL_SMTP_USERNAME', 'your-gmail@gmail.com');
+define('MAIL_SMTP_PASSWORD', 'your-app-password');
+define('MAIL_FROM_EMAIL', 'your-gmail@gmail.com');
+define('MAIL_FROM_NAME', 'UnityFund');
+define('MAIL_REPLY_TO', 'your-gmail@gmail.com');
+define('MAIL_BASE_URL', 'http://localhost/unityfund');
 ```
 
-### Window function — donor rank
-```sql
-RANK() OVER (ORDER BY TotalDonated DESC) AS OverallRank
-```
+## PHPMailer
 
----
+Composer is not required in this repo right now.
 
-## Role Permissions
+PHPMailer source files are stored locally under:
 
-| Action | Guest | Donor | Pending Org | Organizer | Admin |
-|--------|:-----:|:-----:|:-----------:|:---------:|:-----:|
-| Browse campaigns | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Donate | — | ✓ | ✓ | — | — |
-| View receipts | — | ✓ | ✓ | — | ✓ |
-| Create campaign | — | — | — | ✓ | ✓ |
-| Approve campaign | — | — | — | — | ✓ |
-| Approve organizer | — | — | — | — | ✓ |
+- `lib/PHPMailer/src/`
+
+## Important pages and endpoints
+
+### Pages
+
+- `register.php`
+- `login.php`
+- `forgot_password.php`
+- `reset_password.php`
+- `donate.php`
+- `apply_organizer.php`
+- `my_campaigns.php`
+- `admin.php`
+
+### APIs
+
+- `api/create_payment_intent.php`
+- `api/confirm_payment.php`
+- `api/send_email_otp.php`
+- `api/verify_email_otp.php`
+- `api/update_campaign.php`
+- `api/update_user_role.php`
+- `api/request_change.php`
+- `api/stripe_connect.php`
+
+## Setup checklist
+
+1. Configure SQL Server in `db.php`
+2. Configure MongoDB in `includes/mongo.php`
+3. Configure Stripe test keys locally
+4. Configure Gmail SMTP in `includes/mail.local.php`
+5. Make sure PHP can reach:
+   - MongoDB
+   - Stripe API
+   - Gmail SMTP
+6. Open the app under:
+   - `http://localhost/unityfund`
+
+## Security notes
+
+- Do **not** commit:
+  - `db.php`
+  - `includes/mongo.php`
+  - `includes/stripe.php`
+  - `includes/stripe.local.php`
+  - `includes/mail.local.php`
+- Gmail SMTP should use an **App Password**, not a normal account password
+- Password reset links and OTP codes are stored server-side and expire automatically by time checks in application logic
+
+## Demo notes
+
+- Stripe sandbox flow is configured around **destination charges**
+- Organizer payout routing depends on Stripe connected account status
+- Donation email OTP is required before card payment
+- Organizer close email OTP is required before closing an active campaign

@@ -1,7 +1,6 @@
 # ── Credentials & environment ──────────────────────────────────
-db.php
-includes/mongo.php
-includes/stripe.php
+includes/stripe.local.php
+includes/mail.local.php
 .env
 *.env
 
@@ -50,3 +49,12 @@ assets/uploads/avatars/*
 # ── XAMPP / local server ─────────────────────────────────────────
 nbproject/
 .htaccess.bak
+
+# ── Deployment artifacts ────────────────────────────────────────
+deploy.zip
+
+# ── Local DB snapshots ──────────────────────────────────────────
+unityfinddb_current_snapshot.sql
+
+# ── Claude memory ───────────────────────────────────────────────
+.claude/

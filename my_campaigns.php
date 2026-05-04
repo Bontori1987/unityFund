@@ -4,6 +4,7 @@ $basePath  = '';
 require_once 'includes/auth.php';
 require_once 'db.php';
 require_once 'includes/mongo.php';
+require_once 'includes/stripe.php';
 
 requireRole(['organizer', 'admin']);
 
@@ -78,8 +79,41 @@ if ($isAdmin) {
 
 // ── Organizer: unread notifications ──────────────────────────────────────────
 $notifications = [];
+$systemNotifications = [];
 if (!$isAdmin) {
-    $notifications = getNotifications($userID, true);
+    $allNotifications = getNotifications($userID, true);
+    $notifications = array_values(array_filter($allNotifications, fn($n) => ($n['type'] ?? '') === 'change_request'));
+    $systemNotifications = array_values(array_filter(
+        $allNotifications,
+        fn($n) => in_array(($n['type'] ?? ''), ['role_change', 'stripe_required', 'campaign_appeal_result'], true)
+    ));
+}
+
+$stripeAccount = ['account_id' => '', 'onboarded' => false];
+$organizerStripeReady = true;
+if (!$isAdmin) {
+    $stripeAccount = getStripeAccount($userID);
+    $organizerStripeReady = (bool)($stripeAccount['onboarded'] ?? false);
+
+    if (($stripeAccount['account_id'] ?? '') !== '' && !$organizerStripeReady) {
+        $acct = stripeRetrieveAccount($stripeAccount['account_id']);
+        $sandboxFastTrack = stripeIsTestMode()
+            && (($acct['metadata']['unityfund_fasttrack'] ?? '') === '1')
+            && (($acct['capabilities']['transfers'] ?? '') === 'active');
+
+        if (
+            (!isset($acct['error']) && ($acct['charges_enabled'] ?? false) && ($acct['payouts_enabled'] ?? false))
+            || $sandboxFastTrack
+        ) {
+            markStripeOnboarded($userID);
+            $stripeAccount['onboarded'] = true;
+            $organizerStripeReady = true;
+        }
+    }
+
+    if (($stripeAccount['account_id'] ?? '') === '' || empty($stripeAccount['onboarded'])) {
+        $organizerStripeReady = false;
+    }
 }
 
 // ── Campaigns ─────────────────────────────────────────────────────────────────
@@ -136,6 +170,13 @@ try {
     $campaignImages = getCampaignDetailsMap(array_column($campaigns, 'CampID'));
 } catch (Exception $e) {
     $campaignImages = [];
+}
+
+$activeCommenters = [];
+try {
+    $activeCommenters = getMostActiveCommentersForCampaigns(array_column($campaigns, 'CampID'));
+} catch (Exception $e) {
+    $activeCommenters = [];
 }
 
 $pageTitle = $isAdmin ? 'Admin Dashboard' : 'My Campaigns';
@@ -468,7 +509,11 @@ $_closedCamps = (int)($adminStats['ClosedCamps']     ?? 0);
                 $goal      = (float)$c['GoalAmt'];
                 $pct       = $goal > 0 ? min(($raised / $goal) * 100, 100) : 0;
                 $cid       = $c['CampID'];
-                $thumb     = $campaignImages[(int)$cid]['thumbnail'] ?? '';
+                $meta      = $campaignImages[(int)$cid] ?? [];
+                $thumb     = $meta['thumbnail'] ?? '';
+                $forcedClosed = !empty($meta['force_closed_by_admin']);
+                $appealStatus = $meta['appeal_status'] ?? 'none';
+                $appealNotes = $meta['appeal_review_notes'] ?? '';
                 $adminOwns = (int)($c['HostID'] ?? 0) === $userID;
                 $canEdit   = $adminOwns;
                 $statusCfg = [
@@ -514,7 +559,20 @@ $_closedCamps = (int)($adminStats['ClosedCamps']     ?? 0);
                     </div>
                 </td>
                 <td style="font-size:.83rem;"><?= $c['DonorCount'] ?></td>
-                <td><span class="badge <?= $statusCfg[0] ?>"><?= $statusCfg[1] ?></span></td>
+                <td>
+                    <span class="badge <?= $statusCfg[0] ?>"><?= $statusCfg[1] ?></span>
+                    <?php if ($forcedClosed): ?>
+                    <div class="small text-danger mt-1">Force closed by admin</div>
+                    <?php if (!empty($meta['force_closed_reason'])): ?>
+                    <div class="small text-muted"><?= htmlspecialchars($meta['force_closed_reason']) ?></div>
+                    <?php endif; ?>
+                    <?php if ($appealStatus === 'pending'): ?>
+                    <div class="small text-warning">Appeal pending</div>
+                    <?php elseif ($appealStatus === 'rejected' && $appealNotes !== ''): ?>
+                    <div class="small text-muted">Last decision: <?= htmlspecialchars($appealNotes) ?></div>
+                    <?php endif; ?>
+                    <?php endif; ?>
+                </td>
                 <td style="font-size:.78rem;color:#9ca3af;"><?= date('M j, Y', strtotime($c['CreatedAt'])) ?></td>
                 <td class="text-end">
                     <div class="d-flex gap-1 justify-content-end flex-wrap">
@@ -533,10 +591,24 @@ $_closedCamps = (int)($adminStats['ClosedCamps']     ?? 0);
                             <i class="bi bi-lock"></i>
                         </button>
                         <?php elseif ($c['Status'] === 'closed'): ?>
-                        <button class="btn btn-sm btn-outline-success" title="Reactivate"
-                                onclick="quickStatus(<?= $cid ?>,'active')">
-                            <i class="bi bi-unlock"></i>
-                        </button>
+                            <?php if ($forcedClosed): ?>
+                                <?php if ($appealStatus === 'pending'): ?>
+                                <button class="btn btn-sm btn-outline-secondary" title="Appeal pending" disabled>
+                                    <i class="bi bi-hourglass-split"></i>
+                                </button>
+                                <?php else: ?>
+                                <button class="btn btn-sm btn-outline-warning"
+                                        title="<?= $appealStatus === 'rejected' ? 'Appeal again' : 'Send appeal' ?>"
+                                        onclick="sendCampaignAppeal(<?= $cid ?>, <?= json_encode($c['Title']) ?>)">
+                                    <i class="bi bi-send"></i>
+                                </button>
+                                <?php endif; ?>
+                            <?php else: ?>
+                            <button class="btn btn-sm btn-outline-success" title="Reactivate"
+                                    onclick="quickStatus(<?= $cid ?>,'active')">
+                                <i class="bi bi-unlock"></i>
+                            </button>
+                            <?php endif; ?>
                         <?php endif; ?>
                         <?php if ($canEdit): ?>
                         <button class="btn btn-sm btn-outline-secondary" title="Edit"
@@ -919,10 +991,56 @@ $_closedCamps = (int)($adminStats['ClosedCamps']     ?? 0);
             <p class="text-muted mb-0">Create and manage your fundraising campaigns.</p>
         </div>
         <button class="btn btn-success px-4 fw-semibold"
-                data-bs-toggle="collapse" data-bs-target="#newCampPanel">
+                <?= $organizerStripeReady ? 'data-bs-toggle="collapse" data-bs-target="#newCampPanel"' : 'type="button" disabled' ?>>
             <i class="bi bi-plus-lg me-1"></i>New Campaign
         </button>
     </div>
+
+    <?php if (!$organizerStripeReady): ?>
+    <div class="card border-0 shadow-sm mb-4" style="border-left:4px solid #f59e0b!important;">
+        <div class="card-body p-4">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                <div>
+                    <h5 class="fw-bold mb-2">Connect Stripe before creating campaigns</h5>
+                    <p class="text-muted mb-2">
+                        Approved organizers must connect a Stripe payout account first. Donations flow from donor to UnityFund, UnityFund keeps the 5% platform fee, and the rest routes to your connected Stripe account.
+                    </p>
+                    <p class="small text-muted mb-0">
+                        <?= ($stripeAccount['account_id'] ?? '') !== '' ? 'Your Stripe account is linked but setup is incomplete.' : 'No Stripe payout account is linked to your organizer profile yet.' ?>
+                    </p>
+                </div>
+                <div class="d-flex gap-2 flex-wrap">
+                    <button class="btn btn-success fw-semibold px-4" id="campaign-stripe-btn" onclick="connectStripeForCampaigns()">
+                        <i class="bi bi-lightning-fill me-1"></i><?= ($stripeAccount['account_id'] ?? '') !== '' ? 'Resume Stripe Setup' : 'Connect Stripe' ?>
+                    </button>
+                    <a href="profile.php" class="btn btn-outline-secondary px-4">Open Profile</a>
+                </div>
+            </div>
+            <div id="campaign-stripe-msg" class="small mt-3"></div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!empty($systemNotifications)): ?>
+    <div class="card border-0 mb-4" style="border-left:4px solid #0d6efd!important;background:#eff6ff;">
+        <div class="card-body">
+            <h6 class="fw-bold mb-3" style="color:#1d4ed8;">
+                <i class="bi bi-info-circle-fill me-2"></i>Account updates
+            </h6>
+            <?php foreach ($systemNotifications as $n): ?>
+            <div class="d-flex justify-content-between gap-3 mb-3 pb-3 border-bottom">
+                <div>
+                    <div class="fw-semibold small mb-1">
+                        <?= ($n['type'] ?? '') === 'stripe_required' ? 'Stripe connection required' : 'Role updated' ?>
+                    </div>
+                    <p class="mb-0 small text-muted"><?= htmlspecialchars($n['message']) ?></p>
+                </div>
+                <div class="small text-muted flex-shrink-0"><?= htmlspecialchars($n['created_at']) ?></div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php endif; ?>
 
     <!-- Notifications from admin -->
     <?php if (!empty($notifications)): ?>
@@ -962,12 +1080,56 @@ $_closedCamps = (int)($adminStats['ClosedCamps']     ?? 0);
     </div>
     <?php endif; ?>
 
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+                <div>
+                    <h6 class="fw-bold mb-1">Most Active Commenters</h6>
+                    <p class="text-muted small mb-0">Top people engaging across your campaign discussions.</p>
+                </div>
+                <a href="partner/campaign/campaign-detail.php?id=<?= !empty($campaigns) ? (int)$campaigns[0]['CampID'] : 0 ?>#comments"
+                   class="btn btn-sm btn-outline-secondary <?= empty($campaigns) ? 'disabled' : '' ?>">Open discussions</a>
+            </div>
+            <?php if (empty($activeCommenters)): ?>
+            <p class="text-muted small mb-0">No discussion activity yet across your campaigns.</p>
+            <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Commenter</th>
+                            <th>Comments</th>
+                            <th>Campaigns</th>
+                            <th>Latest activity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($activeCommenters as $commenter): ?>
+                        <tr>
+                            <td>
+                                <a href="profile.php?id=<?= (int)$commenter['user_id'] ?>"
+                                   class="text-success text-decoration-none fw-semibold">
+                                    <?= htmlspecialchars($commenter['username']) ?>
+                                </a>
+                            </td>
+                            <td class="fw-semibold"><?= (int)$commenter['comment_count'] ?></td>
+                            <td><?= (int)$commenter['campaign_count'] ?></td>
+                            <td class="text-muted small"><?= htmlspecialchars($commenter['latest_at']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
     <?php if (isset($dbError)): ?>
     <div class="alert alert-danger"><?= htmlspecialchars($dbError) ?></div>
     <?php endif; ?>
 
     <!-- New campaign form -->
-    <div class="collapse mb-4" id="newCampPanel">
+    <div class="collapse mb-4 <?= $organizerStripeReady ? '' : 'd-none' ?>" id="newCampPanel">
         <div class="card border-0 shadow-sm">
             <div class="card-body p-4">
                 <h5 class="fw-bold mb-1">Create New Campaign</h5>
@@ -1387,12 +1549,57 @@ async function loadDonations(campID) {
 // ── Status change ─────────────────────────────────────────────────────────────
 async function quickStatus(campID, newStatus) {
     if (!confirm(`Set campaign status to "${newStatus}"?`)) return;
+    const payload = { camp_id: campID, status: newStatus };
+
+    if (newStatus === 'closed' && <?= json_encode(!isAdmin()) ?>) {
+        const send = await fetch('api/send_email_otp.php', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ purpose: 'campaign_close_auth', camp_id: campID })
+        }).then(r => r.json()).catch(() => ({ success: false, error: 'Could not send Gmail verification code.' }));
+        if (!send.success) {
+            alert('Error: ' + (send.error || 'Could not send Gmail verification code.'));
+            return;
+        }
+
+        const code = prompt('A 6-digit verification code was sent to your Gmail. Enter it to close the campaign:');
+        if (!code) return;
+
+        const verify = await fetch('api/verify_email_otp.php', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ purpose: 'campaign_close_auth', challenge_id: send.challenge_id, code })
+        }).then(r => r.json()).catch(() => ({ success: false, error: 'Could not verify the Gmail code.' }));
+        if (!verify.success) {
+            alert('Error: ' + (verify.error || 'Could not verify the Gmail code.'));
+            return;
+        }
+
+        payload.otp_challenge_id = send.challenge_id;
+    }
+
     const data = await fetch('api/update_campaign.php', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ camp_id: campID, status: newStatus })
+        body: JSON.stringify(payload)
     }).then(r => r.json());
     if (data.success) location.reload();
     else alert('Error: ' + (data.error || 'Update failed'));
+}
+
+async function sendCampaignAppeal(campID, campTitle) {
+    const message = prompt(`Explain why "${campTitle}" should be reopened:`);
+    if (!message || !message.trim()) return;
+    const data = await fetch('api/campaign_appeal.php', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ action: 'submit', camp_id: campID, message: message.trim() })
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error' }));
+    if (data.success) {
+        alert('Appeal sent to admin. You will receive the decision by Gmail and in UnityFund.');
+        location.reload();
+    } else {
+        alert('Error: ' + (data.error || 'Could not send appeal'));
+    }
 }
 
 // ── Organizer: save campaign inline ──────────────────────────────────────────
@@ -1457,6 +1664,34 @@ if (newForm) {
 }
 
 // ── Approve organizer ─────────────────────────────────────────────────────────
+async function connectStripeForCampaigns() {
+    const btn = document.getElementById('campaign-stripe-btn');
+    const msg = document.getElementById('campaign-stripe-msg');
+    if (!btn || !msg) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Redirecting...';
+    msg.textContent = '';
+    msg.className = 'small mt-3';
+    try {
+        const data = await fetch('api/stripe_connect.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        }).then(r => r.json());
+        if (data.success) {
+            window.location.href = data.url;
+            return;
+        }
+        msg.textContent = data.error || 'Could not start Stripe onboarding.';
+        msg.className = 'small mt-3 text-danger';
+    } catch {
+        msg.textContent = 'Network error. Please try again.';
+        msg.className = 'small mt-3 text-danger';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-lightning-fill me-1"></i>Connect Stripe';
+}
+
 async function approveOrganizer(userID, newRole, btn) {
     const notesEl = document.getElementById('decision-notes-' + userID);
     let notes = notesEl ? notesEl.value.trim() : '';

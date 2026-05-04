@@ -16,10 +16,18 @@ $input          = json_decode(file_get_contents('php://input'), true);
 $campId         = (int)($input['camp_id'] ?? 0);
 $amount         = (float)($input['amount'] ?? 0);
 $idempotencyKey = trim($input['idempotency_key'] ?? '');
+$otpChallengeId = trim((string)($input['otp_challenge_id'] ?? ''));
 
 if ($campId <= 0 || $amount <= 0) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Invalid campaign or amount']);
+    exit;
+}
+
+$otp = getVerifiedEmailOtpChallenge((int)currentUser()['id'], $otpChallengeId, 'donation_auth');
+if (!$otp) {
+    http_response_code(403);
+    echo json_encode(['success' => false, 'error' => 'Donation verification expired. Request a new Gmail OTP.']);
     exit;
 }
 
@@ -52,7 +60,14 @@ $connectedAcct = null;
 if ($hostStripe['onboarded'] && $hostStripe['account_id'] !== '') {
     // Verify transfers capability is actually active before routing
     $acctStatus = stripeRetrieveAccount($hostStripe['account_id']);
-    if (!empty($acctStatus['charges_enabled'])) {
+    $sandboxFastTrack = stripeIsTestMode()
+        && (($acctStatus['metadata']['unityfund_fasttrack'] ?? '') === '1')
+        && (($acctStatus['capabilities']['transfers'] ?? '') === 'active');
+
+    if (
+        (!empty($acctStatus['charges_enabled']) && !empty($acctStatus['payouts_enabled']))
+        || $sandboxFastTrack
+    ) {
         $connectedAcct = $hostStripe['account_id'];
     }
 }
@@ -74,6 +89,8 @@ if (isset($intent['error'])) {
     echo json_encode(['success' => false, 'error' => $intent['error']['message'] ?? 'Stripe error']);
     exit;
 }
+
+consumeEmailOtpChallenge($userId, $otpChallengeId, 'donation_auth');
 
 // Record a pending transaction row immediately
 try {

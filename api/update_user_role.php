@@ -4,6 +4,7 @@ header('Content-Type: application/json');
 require_once '../includes/auth.php';
 require_once '../db.php';
 require_once '../includes/mongo.php';
+require_once '../includes/mail.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -27,6 +28,7 @@ $allowed = ['donor', 'organizer', 'pending_organizer', 'admin'];
 
 if ($userID <= 0)               { echo json_encode(['success' => false, 'error' => 'Invalid user ID']); exit; }
 if (!in_array($role, $allowed)) { echo json_encode(['success' => false, 'error' => 'Invalid role']); exit; }
+if ($notes === '')              { echo json_encode(['success' => false, 'error' => 'A reason is required for every role change']); exit; }
 
 // Prevent admin from demoting themselves
 if ($userID === (int)currentUser()['id']) {
@@ -36,12 +38,17 @@ if ($userID === (int)currentUser()['id']) {
 
 try {
     // Fetch current role before changing it
-    $stmt = $conn->prepare("SELECT Role FROM Users WHERE UserID = ?");
+    $stmt = $conn->prepare("SELECT Role, Username, Email FROM Users WHERE UserID = ?");
     $stmt->execute([$userID]);
     $target = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$target) { echo json_encode(['success' => false, 'error' => 'User not found']); exit; }
 
     $oldRole = $target['Role'];
+
+    $decisionId = null;
+    if ($oldRole !== $role) {
+        $decisionId = createRoleChangeDecision($userID, (int)currentUser()['id'], $oldRole, $role, $notes);
+    }
 
     $conn->prepare("UPDATE Users SET Role = ? WHERE UserID = ?")
          ->execute([$role, $userID]);
@@ -53,9 +60,57 @@ try {
     }
 
     // Send notification to the affected user
-    if ($notify && $oldRole !== $role) {
+    if ($oldRole !== $role) {
         $reason = $notes ?: 'No reason provided';
-        sendRoleChangeNotification((int)currentUser()['id'], $userID, $oldRole, $role, $reason);
+        if ($notify || $role === 'organizer' || $role === 'donor') {
+            sendRoleChangeNotificationWithDecision((int)currentUser()['id'], $userID, $oldRole, $role, $reason, (string)($decisionId ?? ''));
+        }
+        if ($role === 'organizer') {
+            sendStripeRequiredNotification((int)currentUser()['id'], $userID);
+        }
+
+        $email = strtolower(trim((string)($target['Email'] ?? '')));
+        if ($email !== '') {
+            $labels = [
+                'donor' => 'Donor',
+                'pending_organizer' => 'Pending Organizer',
+                'organizer' => 'Organizer',
+                'admin' => 'Admin',
+            ];
+            $summary = [
+                'Previous role' => $labels[$oldRole] ?? ucfirst($oldRole),
+                'New role' => $labels[$role] ?? ucfirst($role),
+                'Decision notes' => $reason,
+            ];
+            $bullets = [];
+            $subject = 'UnityFund account role updated';
+            $title = 'Account role updated';
+            $intro = 'An admin updated your UnityFund role and attached the decision notes below.';
+
+            if ($role === 'organizer') {
+                $subject = 'Organizer application approved';
+                $title = 'Organizer access approved';
+                $intro = 'Your organizer application was approved. Connect Stripe before creating your first campaign.';
+                $bullets[] = 'Open My Campaigns and click Connect Stripe.';
+                $bullets[] = 'After Stripe is connected, campaign creation will unlock.';
+            } elseif ($role === 'donor' && in_array($oldRole, ['pending_organizer', 'organizer'], true)) {
+                $subject = 'Organizer application not approved';
+                $title = 'Organizer access not approved';
+                $intro = 'Your organizer request was not approved at this time. Review the admin notes before applying again.';
+                $bullets[] = 'You can still use the account as a donor.';
+                $bullets[] = 'Apply again after correcting the requested issues.';
+            }
+
+            sendRoleChangeEmail(
+                $email,
+                (string)($target['Username'] ?? 'User'),
+                $subject,
+                $title,
+                $intro,
+                $summary,
+                $bullets
+            );
+        }
     }
 
     echo json_encode(['success' => true]);

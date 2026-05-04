@@ -43,7 +43,15 @@ if ($stripe['onboarded'] && $accountId !== '') {
 
 // Create a new account if none exists
 if ($accountId === '') {
-    $account = stripeCreateConnectAccount($row['Email']);
+    if (stripeIsTestMode()) {
+        $account = stripeCreateFastTestConnectAccount(
+            (string)$row['Email'],
+            (string)(currentUser()['username'] ?? 'Test Organizer'),
+            (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1')
+        );
+    } else {
+        $account = stripeCreateConnectAccount($row['Email']);
+    }
     if (isset($account['error'])) {
         echo json_encode(['success' => false, 'error' => $account['error']['message'] ?? 'Stripe error']);
         exit;
@@ -52,10 +60,31 @@ if ($accountId === '') {
     saveStripeAccountId($userId, $accountId);
 }
 
+// In test mode, fast-track accounts can be treated as ready for demo routing
+if (stripeIsTestMode() && $accountId !== '') {
+    $verify = stripeRetrieveAccount($accountId);
+    $sandboxFastTrack = (($verify['metadata']['unityfund_fasttrack'] ?? '') === '1')
+        && (($verify['capabilities']['transfers'] ?? '') === 'active');
+
+    if (
+        ((!isset($verify['error'])) && ($verify['charges_enabled'] ?? false) && ($verify['payouts_enabled'] ?? false))
+        || $sandboxFastTrack
+    ) {
+        markStripeOnboarded($userId);
+        $baseUrl = (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
+        echo json_encode([
+            'success' => true,
+            'url' => $baseUrl . '/my_campaigns.php?stripe_connected=1',
+            'fast_track' => true,
+        ]);
+        exit;
+    }
+}
+
 // Generate onboarding link
 $baseUrl     = (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
-$returnUrl   = $baseUrl . '/unityfund/stripe_connect_return.php';
-$refreshUrl  = $baseUrl . '/unityfund/profile.php';
+$returnUrl   = $baseUrl . '/stripe_connect_return.php';
+$refreshUrl  = $baseUrl . '/profile.php';
 
 $link = stripeCreateAccountLink($accountId, $returnUrl, $refreshUrl);
 if (isset($link['error'])) {

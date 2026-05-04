@@ -93,6 +93,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <input type="password" name="password" class="form-control"
                        placeholder="Your password" required>
             </div>
+            <div class="d-flex justify-content-end mb-3">
+                <a href="forgot_password.php" class="small text-success fw-semibold text-decoration-none">Forgot password?</a>
+            </div>
             <button type="submit" class="btn btn-success w-100 fw-semibold py-2">
                 Sign In
             </button>
@@ -102,13 +105,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             No account?
             <a href="register.php" class="text-success fw-semibold text-decoration-none">Register here</a>
         </p>
-
-        <div class="text-center mt-3 p-2 rounded" style="background:#fffbea;border:1px solid #ffe082;font-size:.8rem;color:#6d4c00;">
-            <i class="bi bi-gear me-1"></i>Testing?
-            <a href="dev_login.php" class="fw-semibold" style="color:#6d4c00;">Dev Switcher</a>
-            &nbsp;·&nbsp;
-            <a href="setup_test_accounts.php" style="color:#6d4c00;">Setup accounts</a>
-        </div>
 
     </div>
 </div>

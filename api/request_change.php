@@ -3,6 +3,7 @@ session_start();
 header('Content-Type: application/json');
 require_once '../includes/auth.php';
 require_once '../includes/mongo.php';
+require_once '../includes/mail.php';
 require_once '../db.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -28,9 +29,14 @@ if ($campId <= 0 || !in_array($changeType, ['name', 'goal']) || $message === '')
     exit;
 }
 
-// Fetch campaign title + organizer ID
+// Fetch campaign title + organizer contact
 try {
-    $stmt = $conn->prepare("SELECT Title, HostID FROM Campaigns WHERE CampID = ?");
+    $stmt = $conn->prepare(
+        "SELECT c.Title, c.HostID, u.Username, u.Email
+         FROM Campaigns c
+         JOIN Users u ON u.UserID = c.HostID
+         WHERE c.CampID = ?"
+    );
     $stmt->execute([$campId]);
     $camp = $stmt->fetch(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
@@ -53,5 +59,15 @@ $ok = sendChangeRequest(
     $changeType,
     $message
 );
+
+if ($ok && !empty($camp['Email'])) {
+    sendCampaignChangeRequestEmail(
+        (string)$camp['Email'],
+        (string)($camp['Username'] ?? 'Organizer'),
+        (string)$camp['Title'],
+        $changeType,
+        $message
+    );
+}
 
 echo json_encode(['success' => $ok, 'error' => $ok ? null : 'Failed to send — is MongoDB running?']);

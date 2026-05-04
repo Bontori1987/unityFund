@@ -52,6 +52,18 @@ try {
     $donations = $dStmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) { /* view may not exist yet */ }
 
+$topSupporters = [];
+try {
+    $sStmt = $conn->prepare(
+        "SELECT DonorID, DonorName, Amt, RankInCampaign
+         FROM vw_DonationRunningTotal
+         WHERE CampID = ? AND RankInCampaign <= 3
+         ORDER BY RankInCampaign, Amt DESC, Time ASC"
+    );
+    $sStmt->execute([$id]);
+    $topSupporters = $sStmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) { /* view may not exist yet */ }
+
 $commentThread = ['total' => 0, 'roots' => []];
 try {
     $commentThread = getCampaignComments($id);
@@ -409,6 +421,39 @@ require_once '../../includes/header.php';
 
                 </div>
             </div>
+
+            <div class="card mt-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold mb-0">Top Supporters</h6>
+                        <span class="text-muted small" id="supportersSyncLabel">Live</span>
+                    </div>
+                    <div id="supportersList">
+                        <?php if (empty($topSupporters)): ?>
+                        <p class="text-muted small mb-0">No supporters yet.</p>
+                        <?php else: ?>
+                            <?php foreach ($topSupporters as $supporter): ?>
+                            <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                                <div>
+                                    <div class="fw-semibold small">
+                                        <?= [1 => '🥇', 2 => '🥈', 3 => '🥉'][(int)$supporter['RankInCampaign']] ?? '#' . (int)$supporter['RankInCampaign'] ?>
+                                        <?php if ($supporter['DonorID']): ?>
+                                        <a href="../../profile.php?id=<?= (int)$supporter['DonorID'] ?>" class="text-success text-decoration-none ms-1">
+                                            <?= htmlspecialchars($supporter['DonorName']) ?>
+                                        </a>
+                                        <?php else: ?>
+                                        <span class="text-muted ms-1"><?= htmlspecialchars($supporter['DonorName']) ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                                <div class="fw-semibold text-success small">$<?= number_format((float)$supporter['Amt'], 2) ?></div>
+                            </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="small text-muted mt-3">Supporter standings refresh automatically every few seconds.</div>
+                </div>
+            </div>
         </div>
 
     </div>
@@ -416,6 +461,7 @@ require_once '../../includes/header.php';
 
 <script>
 const CAMPAIGN_ID = <?= (int)$id ?>;
+const CAN_COMMENT = <?= $isLoggedIn ? 'true' : 'false' ?>;
 let commentCount = <?= (int)$commentThread['total'] ?>;
 
 function handleShare() {
@@ -446,7 +492,7 @@ function updateCommentCount() {
     }
 }
 
-function commentHtml(comment, depth) {
+function commentHtml(comment, depth, repliesHtml = '') {
     const id = escapeHtml(comment.id);
     const username = escapeHtml(comment.username || 'User');
     const createdAt = escapeHtml(comment.created_at || '');
@@ -456,23 +502,7 @@ function commentHtml(comment, depth) {
     const profileLink = userId > 0
         ? `<a href="../../profile.php?id=${userId}" class="fw-semibold text-success text-decoration-none">${username}</a>`
         : `<span class="fw-semibold">${username}</span>`;
-
-    return `
-        <div class="comment-item ${indent} mt-3" id="comment-${id}" data-comment-id="${id}" data-depth="${depth}">
-            <div class="d-flex gap-2">
-                <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0"
-                     style="width:34px;height:34px;">
-                    <i class="bi bi-person"></i>
-                </div>
-                <div class="flex-grow-1">
-                    <div class="d-flex align-items-center gap-2 flex-wrap">
-                        ${profileLink}
-                        ${createdAt ? `<span class="text-muted small">${createdAt}</span>` : ''}
-                    </div>
-                    <div class="text-muted mt-1" style="line-height:1.6;white-space:normal;">
-                        ${body}
-                    </div>
-
+    const replyUi = CAN_COMMENT ? `
                     <button class="btn btn-link btn-sm text-success p-0 mt-1"
                             type="button"
                             data-bs-toggle="collapse"
@@ -492,13 +522,37 @@ function commentHtml(comment, depth) {
                                 <span class="comment-error text-danger small"></span>
                             </div>
                         </form>
+                    </div>` : '';
+
+    return `
+        <div class="comment-item ${indent} mt-3" id="comment-${id}" data-comment-id="${id}" data-depth="${depth}">
+            <div class="d-flex gap-2">
+                <div class="rounded-circle bg-success bg-opacity-10 text-success d-flex align-items-center justify-content-center flex-shrink-0"
+                     style="width:34px;height:34px;">
+                    <i class="bi bi-person"></i>
+                </div>
+                <div class="flex-grow-1">
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        ${profileLink}
+                        ${createdAt ? `<span class="text-muted small">${createdAt}</span>` : ''}
+                    </div>
+                    <div class="text-muted mt-1" style="line-height:1.6;white-space:normal;">
+                        ${body}
                     </div>
 
-                    <div class="comment-replies" data-replies-for="${id}"></div>
+                    ${replyUi}
+                    <div class="comment-replies" data-replies-for="${id}">${repliesHtml}</div>
                 </div>
             </div>
         </div>
     `;
+}
+
+function commentTreeHtml(comments, depth = 0) {
+    return (comments || []).map((comment) => {
+        const repliesHtml = commentTreeHtml(comment.replies || [], depth + 1);
+        return commentHtml(comment, depth, repliesHtml);
+    }).join('');
 }
 
 function insertComment(comment) {
@@ -582,6 +636,58 @@ function bindCommentForm(form) {
 document.querySelectorAll('.comment-form').forEach((form) => {
     bindCommentForm(form);
 });
+
+function renderSupporters(supporters) {
+    const list = document.getElementById('supportersList');
+    if (!list) return;
+    if (!Array.isArray(supporters) || supporters.length === 0) {
+        list.innerHTML = '<p class="text-muted small mb-0">No supporters yet.</p>';
+        return;
+    }
+    const medals = {1: '🥇', 2: '🥈', 3: '🥉'};
+    list.innerHTML = supporters.map((supporter) => `
+        <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+            <div class="fw-semibold small">
+                ${medals[Number(supporter.rank)] || '#' + Number(supporter.rank)}
+                ${supporter.donor_id ? `<a href="../../profile.php?id=${Number(supporter.donor_id)}" class="text-success text-decoration-none ms-1">${escapeHtml(supporter.donor_name)}</a>` : `<span class="text-muted ms-1">${escapeHtml(supporter.donor_name)}</span>`}
+            </div>
+            <div class="fw-semibold text-success small">$${Number(supporter.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+        </div>
+    `).join('');
+}
+
+async function refreshSupporters() {
+    try {
+        const data = await fetch(`../../api/campaign_supporters.php?camp_id=${encodeURIComponent(CAMPAIGN_ID)}`, { cache: 'no-store' }).then((r) => r.json());
+        if (!data.success) return;
+        renderSupporters(data.supporters || []);
+        const sync = document.getElementById('supportersSyncLabel');
+        if (sync) sync.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (e) {}
+}
+
+async function refreshCommentsFeed() {
+    if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') {
+        return;
+    }
+    try {
+        const data = await fetch(`../../api/campaign_comments_feed.php?camp_id=${encodeURIComponent(CAMPAIGN_ID)}`, { cache: 'no-store' }).then((r) => r.json());
+        if (!data.success || !data.thread) return;
+        commentCount = Number(data.thread.total || 0);
+        updateCommentCount();
+        const empty = document.getElementById('noCommentsMessage');
+        if (empty) empty.style.display = commentCount === 0 ? '' : 'none';
+        const thread = document.getElementById('commentThread');
+        if (!thread) return;
+        thread.innerHTML = commentTreeHtml(data.thread.roots || []);
+        thread.querySelectorAll('.comment-form').forEach((form) => bindCommentForm(form));
+    } catch (e) {}
+}
+
+setInterval(() => {
+    refreshSupporters();
+    refreshCommentsFeed();
+}, 8000);
 
 </script>
 

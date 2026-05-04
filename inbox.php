@@ -43,6 +43,7 @@ foreach ($rawDocs as $d) {
     $items[] = [
         'id'          => (string)($d->_id ?? ''),
         'type'        => $d->type        ?? 'notification',
+        'decision_id' => $d->decision_id ?? '',
         'camp_id'     => $d->camp_id     ?? 0,
         'camp_title'  => $d->camp_title  ?? '',
         'change_type' => $d->change_type ?? '',
@@ -52,6 +53,13 @@ foreach ($rawDocs as $d) {
         'from_name'   => $senderNames[$fromId] ?? 'System',
         'created_at'  => isset($d->created_at) ? formatMongoDate($d->created_at) : '',
     ];
+}
+
+$roleDecisionMap = [];
+try {
+    $roleDecisionMap = getRoleChangeDecisionsMap(array_column($items, 'decision_id'));
+} catch (Exception $e) {
+    $roleDecisionMap = [];
 }
 
 $campaignImages = [];
@@ -102,10 +110,12 @@ require_once 'includes/header.php';
             $typeIcon = match($n['type']) {
                 'change_request' => 'bi-send text-warning',
                 'role_change'    => 'bi-shield-lock text-danger',
+                'role_appeal_result' => 'bi-arrow-repeat text-primary',
                 default          => 'bi-bell text-muted',
             };
             $unreadBorder = match($n['type']) {
                 'role_change' => 'border-left:3px solid #ef4444!important;background:#fef2f2;',
+                'role_appeal_result' => 'border-left:3px solid #3b82f6!important;background:#eff6ff;',
                 default       => 'border-left:3px solid #f59e0b!important;background:#fffbeb;',
             };
             $changeLabel = match($n['change_type']) {
@@ -113,6 +123,7 @@ require_once 'includes/header.php';
                 'goal' => ['bg-warning text-dark','Goal change'],
                 default => ['bg-secondary',     ucfirst($n['change_type'])],
             };
+            $decisionMeta = !empty($n['decision_id']) ? ($roleDecisionMap[(string)$n['decision_id']] ?? null) : null;
         ?>
         <div class="card border-0 shadow-sm notification-item <?= $isRead ? '' : 'unread' ?>"
              id="notif-<?= htmlspecialchars($n['id']) ?>"
@@ -156,6 +167,51 @@ require_once 'includes/header.php';
                             From <strong><?= htmlspecialchars($n['from_name']) ?></strong>
                             &middot; <?= $n['created_at'] ?>
                         </div>
+                        <?php if (($n['type'] ?? '') === 'role_change' && $decisionMeta): ?>
+                        <div class="mt-2">
+                            <div class="small text-muted mb-2">
+                                Appeal status:
+                                <strong><?= htmlspecialchars(ucfirst($decisionMeta['appeal_status'] ?? 'none')) ?></strong>
+                                <?php if (!empty($decisionMeta['appeal_review_notes']) && ($decisionMeta['appeal_status'] ?? '') !== 'pending'): ?>
+                                &middot; <?= htmlspecialchars($decisionMeta['appeal_review_notes']) ?>
+                                <?php endif; ?>
+                            </div>
+                            <?php if (($decisionMeta['appeal_status'] ?? 'none') === 'none' || ($decisionMeta['appeal_status'] ?? 'none') === 'rejected'): ?>
+                            <div class="d-flex gap-2 flex-wrap">
+                                <textarea class="form-control form-control-sm role-appeal-message"
+                                          id="role-appeal-msg-<?= htmlspecialchars($n['decision_id']) ?>"
+                                          rows="2"
+                                          placeholder="Explain why the role decision should be reconsidered."></textarea>
+                            </div>
+                            <div class="d-flex gap-2 flex-wrap align-items-center mt-2">
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        id="role-appeal-send-otp-<?= htmlspecialchars($n['decision_id']) ?>"
+                                        onclick="sendRoleAppealOtp('<?= htmlspecialchars($n['decision_id']) ?>', this)">
+                                    Send Gmail OTP
+                                </button>
+                                <input type="text"
+                                       class="form-control form-control-sm"
+                                       id="role-appeal-otp-<?= htmlspecialchars($n['decision_id']) ?>"
+                                       inputmode="numeric"
+                                       maxlength="6"
+                                       placeholder="Enter 6-digit OTP"
+                                       style="max-width:170px;">
+                                <button class="btn btn-sm btn-outline-primary"
+                                        onclick="submitRoleAppeal('<?= htmlspecialchars($n['decision_id']) ?>', this)">
+                                    Verify and appeal
+                                </button>
+                            </div>
+                            <input type="hidden"
+                                   id="role-appeal-challenge-<?= htmlspecialchars($n['decision_id']) ?>"
+                                   value="">
+                            <div class="small text-muted mt-1" id="role-appeal-status-<?= htmlspecialchars($n['decision_id']) ?>">
+                                Send a Gmail OTP before submitting the appeal.
+                            </div>
+                            <?php elseif (($decisionMeta['appeal_status'] ?? '') === 'pending'): ?>
+                            <div class="small text-warning">An appeal is already pending review.</div>
+                            <?php endif; ?>
+                        </div>
+                        <?php endif; ?>
                     </div>
 
                     <!-- Mark read button -->
@@ -203,6 +259,75 @@ function updateUnreadLabel() {
     const unread = document.querySelectorAll('.notification-item.unread').length;
     const sub = document.querySelector('h1 + p');
     if (sub) sub.textContent = unread > 0 ? `${unread} unread message${unread > 1 ? 's' : ''}` : 'All caught up';
+}
+
+async function submitRoleAppeal(decisionId, btn) {
+    const textarea = document.getElementById('role-appeal-msg-' + decisionId);
+    const message = textarea ? textarea.value.trim() : '';
+    const otpInput = document.getElementById('role-appeal-otp-' + decisionId);
+    const challengeInput = document.getElementById('role-appeal-challenge-' + decisionId);
+    const statusEl = document.getElementById('role-appeal-status-' + decisionId);
+    const code = otpInput ? otpInput.value.replace(/\D+/g, '').slice(0, 6) : '';
+    const challengeId = challengeInput ? challengeInput.value.trim() : '';
+    if (!message) {
+        textarea?.focus();
+        return;
+    }
+    if (!challengeId) {
+        statusEl && (statusEl.textContent = 'Request a Gmail OTP first.');
+        return;
+    }
+    if (code.length !== 6) {
+        otpInput?.focus();
+        statusEl && (statusEl.textContent = 'Enter the 6-digit Gmail OTP.');
+        return;
+    }
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Verifying Gmail OTP…';
+    const verify = await fetch('api/verify_email_otp.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ purpose: 'role_appeal_auth', challenge_id: challengeId, code })
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error' }));
+    if (!verify.success) {
+        alert('Error: ' + (verify.error || 'Could not verify OTP'));
+        btn.disabled = false;
+        if (statusEl) statusEl.textContent = verify.error || 'OTP verification failed.';
+        return;
+    }
+    if (statusEl) statusEl.textContent = 'Submitting appeal…';
+    const data = await fetch('api/role_change_appeal.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ action: 'submit', decision_id: decisionId, message, otp_challenge_id: challengeId })
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error' }));
+    if (data.success) {
+        location.reload();
+    } else {
+        alert('Error: ' + (data.error || 'Could not submit appeal'));
+        btn.disabled = false;
+        if (statusEl) statusEl.textContent = data.error || 'Could not submit appeal.';
+    }
+}
+
+async function sendRoleAppealOtp(decisionId, btn) {
+    btn.disabled = true;
+    const statusEl = document.getElementById('role-appeal-status-' + decisionId);
+    const challengeInput = document.getElementById('role-appeal-challenge-' + decisionId);
+    if (statusEl) statusEl.textContent = 'Sending Gmail OTP…';
+    const data = await fetch('api/send_email_otp.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ purpose: 'role_appeal_auth', decision_id: decisionId })
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error' }));
+    if (data.success) {
+        if (challengeInput) challengeInput.value = data.challenge_id || '';
+        if (statusEl) statusEl.textContent = 'OTP sent to your Gmail. Enter it here, then submit the appeal.';
+    } else {
+        alert('Error: ' + (data.error || 'Could not send OTP'));
+        if (statusEl) statusEl.textContent = data.error || 'Could not send OTP.';
+    }
+    btn.disabled = false;
 }
 </script>
 

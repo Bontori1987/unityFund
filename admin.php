@@ -75,6 +75,8 @@ try { $campaignImages = getCampaignDetailsMap(array_column($campaigns, 'CampID')
 // ── Pending organizer applications ───────────────────────────────────────────
 $pendingOrganizers = [];
 $organizerApplications = [];
+$pendingRoleAppeals = [];
+$roleAppealUsers = [];
 try {
     $pendingOrganizers = $conn->query(
         "SELECT UserID, Username, Email, CreatedAt
@@ -83,6 +85,22 @@ try {
     )->fetchAll(PDO::FETCH_ASSOC);
     $organizerApplications = getOrganizerApplicationsForUsers(array_column($pendingOrganizers,'UserID'));
 } catch(PDOException $e) {}
+
+try {
+    $pendingRoleAppeals = getPendingRoleChangeAppeals();
+    $roleUserIds = array_values(array_unique(array_filter(array_merge(
+        array_column($pendingRoleAppeals, 'user_id'),
+        array_column($pendingRoleAppeals, 'admin_id')
+    ))));
+    if (!empty($roleUserIds)) {
+        $ph = implode(',', array_fill(0, count($roleUserIds), '?'));
+        $stmt = $conn->prepare("SELECT UserID, Username, Email FROM Users WHERE UserID IN ($ph)");
+        $stmt->execute($roleUserIds);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $roleAppealUsers[(int)$row['UserID']] = $row;
+        }
+    }
+} catch (Throwable $e) {}
 
 // ── All users ─────────────────────────────────────────────────────────────────
 $allUsers = [];
@@ -143,6 +161,41 @@ foreach ($transactions as $t) {
     elseif ($t['Status'] === 'failed') $txFailed++;
     else $txPending++;
 }
+
+$donationAnomalies = [];
+try {
+    $donationAnomalies = $conn->query(
+        "WITH DonationBursts AS (
+            SELECT
+                d.DonorID,
+                u.Username,
+                u.Email,
+                DATEADD(MINUTE, DATEDIFF(MINUTE, 0, d.Time), 0) AS MinuteBucket,
+                COUNT(*) AS DonationCount,
+                COUNT(DISTINCT d.CampID) AS CampaignSpread,
+                SUM(d.Amt) AS TotalAmt,
+                AVG(d.Amt) AS AvgAmt,
+                MIN(d.Amt) AS MinAmt,
+                MAX(d.Amt) AS MaxAmt
+            FROM Donations d WITH (NOLOCK)
+            JOIN Users u WITH (NOLOCK) ON u.UserID = d.DonorID
+            GROUP BY
+                d.DonorID,
+                u.Username,
+                u.Email,
+                DATEADD(MINUTE, DATEDIFF(MINUTE, 0, d.Time), 0)
+            HAVING COUNT(*) >= 10 AND AVG(d.Amt) <= 10
+        )
+        SELECT TOP 20 *,
+            CASE
+                WHEN DonationCount >= 50 AND AvgAmt <= 5 THEN 'Critical'
+                WHEN DonationCount >= 25 AND AvgAmt <= 10 THEN 'High'
+                ELSE 'Watch'
+            END AS Severity
+        FROM DonationBursts
+        ORDER BY DonationCount DESC, AvgAmt ASC, MinuteBucket DESC"
+    )->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {}
 
 // ── All receipts (for Receipts panel) ────────────────────────────────────────
 $receipts = [];
@@ -1604,6 +1657,59 @@ html, body {
         </div>
     </div>
 
+    <div class="d-card mt-4">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+            <div>
+                <div style="font-size:.875rem;font-weight:700;color:var(--text-primary);">Suspicious Donation Bursts</div>
+                <div style="font-size:.76rem;color:var(--text-muted);">Read-only scan using `WITH (NOLOCK)` so reporting does not block the live donation path.</div>
+            </div>
+            <a href="transactions.php" class="btn btn-sm btn-outline-light">Open transactions</a>
+        </div>
+        <?php if (empty($donationAnomalies)): ?>
+        <div class="text-muted small">No suspicious micro-donation bursts matched the current threshold.</div>
+        <?php else: ?>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Severity</th>
+                        <th>Donor</th>
+                        <th>Window</th>
+                        <th>Count</th>
+                        <th>Avg</th>
+                        <th>Total</th>
+                        <th>Campaigns</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($donationAnomalies as $burst):
+                    $sevClass = match ($burst['Severity']) {
+                        'Critical' => 'bg-danger',
+                        'High' => 'bg-warning text-dark',
+                        default => 'bg-secondary',
+                    };
+                ?>
+                    <tr>
+                        <td><span class="badge <?= $sevClass ?>"><?= htmlspecialchars($burst['Severity']) ?></span></td>
+                        <td>
+                            <a href="profile.php?id=<?= (int)$burst['DonorID'] ?>" class="text-success text-decoration-none fw-semibold">
+                                <?= htmlspecialchars($burst['Username']) ?>
+                            </a>
+                            <div class="small text-muted"><?= htmlspecialchars($burst['Email']) ?></div>
+                        </td>
+                        <td class="small text-muted"><?= date('M j, Y H:i', strtotime((string)$burst['MinuteBucket'])) ?></td>
+                        <td class="fw-semibold"><?= (int)$burst['DonationCount'] ?></td>
+                        <td>$<?= number_format((float)$burst['AvgAmt'], 2) ?></td>
+                        <td>$<?= number_format((float)$burst['TotalAmt'], 2) ?></td>
+                        <td><?= (int)$burst['CampaignSpread'] ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+    </div>
+
 </div><!-- /panel-overview -->
 
 
@@ -1666,6 +1772,8 @@ html, body {
                 $campMeta  = $campaignImages[(int)$cid] ?? [];
                 $thumb     = $campMeta['thumbnail']   ?? '';
                 $desc      = $campMeta['description'] ?? '';
+                $forcedClosed = !empty($campMeta['force_closed_by_admin']);
+                $appealStatus = $campMeta['appeal_status'] ?? 'none';
                 $adminOwns = (int)($c['HostID'] ?? 0) === $userID;
 
                 $statusCfg = match($c['Status']) {
@@ -1723,6 +1831,12 @@ html, body {
                     <span style="font-size:.7rem;font-weight:700;padding:3px 10px;border-radius:99px;<?= $statusCfg[0] ?>">
                         <?= $statusCfg[1] ?>
                     </span>
+                    <?php if ($forcedClosed): ?>
+                    <div style="font-size:.72rem;color:var(--danger);margin-top:6px;">Force closed by admin</div>
+                    <?php if ($appealStatus === 'pending'): ?>
+                    <div style="font-size:.72rem;color:var(--amber);">Appeal pending review</div>
+                    <?php endif; ?>
+                    <?php endif; ?>
                 </td>
                 <!-- Created -->
                 <td style="color:var(--text-dim);white-space:nowrap;">
@@ -1734,26 +1848,39 @@ html, body {
                         <?php if ($c['Status'] === 'pending'): ?>
                         <button class="btn btn-sm" title="Approve"
                                 style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 9px;"
-                                onclick="quickStatus(<?= $cid ?>,'active')">
+                                onclick="quickStatus(<?= $cid ?>,'active','pending')">
                             <i class="bi bi-check-lg"></i>
                         </button>
                         <button class="btn btn-sm" title="Reject"
                                 style="background:var(--danger-dim);color:var(--danger);border:1px solid var(--danger-dim);border-radius:6px;padding:4px 9px;"
-                                onclick="quickStatus(<?= $cid ?>,'closed')">
+                                onclick="quickStatus(<?= $cid ?>,'closed','pending')">
                             <i class="bi bi-x-lg"></i>
                         </button>
                         <?php elseif ($c['Status'] === 'active'): ?>
                         <button class="btn btn-sm" title="Close"
                                 style="background:var(--danger-dim);color:var(--danger);border:1px solid var(--danger-dim);border-radius:6px;padding:4px 9px;"
-                                onclick="quickStatus(<?= $cid ?>,'closed')">
+                                onclick="quickStatus(<?= $cid ?>,'closed','active')">
                             <i class="bi bi-lock"></i>
                         </button>
                         <?php elseif ($c['Status'] === 'closed'): ?>
+                        <?php if ($forcedClosed && $appealStatus === 'pending'): ?>
+                        <button class="btn btn-sm" title="Approve appeal"
+                                style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:4px 9px;"
+                                onclick="reviewAppeal(<?= $cid ?>,'approved',<?= json_encode($c['Title']) ?>)">
+                            <i class="bi bi-check2-circle"></i>
+                        </button>
+                        <button class="btn btn-sm" title="Reject appeal"
+                                style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.2);border-radius:6px;padding:4px 9px;"
+                                onclick="reviewAppeal(<?= $cid ?>,'rejected',<?= json_encode($c['Title']) ?>)">
+                            <i class="bi bi-x-octagon"></i>
+                        </button>
+                        <?php else: ?>
                         <button class="btn btn-sm" title="Reactivate"
                                 style="background:var(--accent-dim);color:var(--accent);border:1px solid var(--accent-dim);border-radius:6px;padding:4px 9px;"
-                                onclick="quickStatus(<?= $cid ?>,'active')">
+                                onclick="quickStatus(<?= $cid ?>,'active','closed')">
                             <i class="bi bi-unlock"></i>
                         </button>
+                        <?php endif; ?>
                         <?php endif; ?>
 
                         <?php if ($adminOwns): ?>
@@ -2105,7 +2232,7 @@ html, body {
                                     'admin'     => ['bi-shield-fill',   'var(--danger)', 'Admin'],
                                 ];
                                 foreach ($roleOptions as $rk => [$icon, $color, $rlabel]):
-                                    $isCurrent = $u['Role'] === $rk || ($rk === 'organizer' && $u['Role'] === 'pending_organizer');
+                                    $isCurrent = $u['Role'] === $rk;
                                 ?>
                                 <li>
                                     <button class="dropdown-item py-2"
@@ -2127,6 +2254,57 @@ html, body {
             </tbody>
         </table>
         </div>
+    </div>
+
+    <div class="d-card mt-4">
+        <div style="font-size:.875rem;font-weight:700;color:var(--text-primary);margin-bottom:14px;">
+            <i class="bi bi-arrow-repeat me-2" style="color:var(--blue);"></i>Pending Role Appeals
+        </div>
+        <?php if (empty($pendingRoleAppeals)): ?>
+        <div class="text-muted small">No pending role appeals.</div>
+        <?php else: ?>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Change</th>
+                        <th>Admin reason</th>
+                        <th>Appeal</th>
+                        <th>Submitted</th>
+                        <th class="text-end">Review</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($pendingRoleAppeals as $appeal):
+                    $appealUser = $roleAppealUsers[(int)$appeal['user_id']] ?? ['Username' => 'User', 'Email' => ''];
+                ?>
+                    <tr>
+                        <td>
+                            <div class="fw-semibold"><?= htmlspecialchars($appealUser['Username']) ?></div>
+                            <div class="small text-muted"><?= htmlspecialchars($appealUser['Email']) ?></div>
+                        </td>
+                        <td class="small">
+                            <strong><?= htmlspecialchars(ucfirst(str_replace('_', ' ', $appeal['old_role']))) ?></strong>
+                            <i class="bi bi-arrow-right mx-1"></i>
+                            <strong><?= htmlspecialchars(ucfirst(str_replace('_', ' ', $appeal['new_role']))) ?></strong>
+                        </td>
+                        <td class="small text-muted"><?= nl2br(htmlspecialchars($appeal['reason'])) ?></td>
+                        <td class="small"><?= nl2br(htmlspecialchars($appeal['appeal_message'])) ?></td>
+                        <td class="small text-muted"><?= htmlspecialchars($appeal['appeal_submitted_at']) ?></td>
+                        <td class="text-end" style="min-width:240px;">
+                            <textarea class="form-control form-control-sm mb-2" id="role-appeal-notes-<?= htmlspecialchars($appeal['id']) ?>" rows="2" placeholder="Decision notes are required"></textarea>
+                            <div class="d-flex justify-content-end gap-2">
+                                <button class="btn btn-sm btn-outline-success" onclick="reviewRoleAppeal('<?= htmlspecialchars($appeal['id']) ?>','approved', this)">Approve</button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="reviewRoleAppeal('<?= htmlspecialchars($appeal['id']) ?>','rejected', this)">Reject</button>
+                            </div>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
     </div>
 
 </div><!-- /panel-users -->
@@ -2736,16 +2914,33 @@ async function saveEditModal() {
 }
 
 // ── Quick status update ───────────────────────────────────────────────────────
-async function quickStatus(campID, newStatus) {
+async function quickStatus(campID, newStatus, currentStatus = '') {
     if (!confirm(`Set campaign status to "${newStatus}"?`)) return;
     try {
+        const payload = { camp_id: campID, status: newStatus };
+        if (newStatus === 'closed' && currentStatus === 'active') {
+            const reason = prompt('Reason for force closing this active campaign?');
+            if (reason === null) return;
+            payload.admin_reason = reason.trim();
+        }
         const data = await fetch('api/update_campaign.php', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ camp_id: campID, status: newStatus }),
+            body: JSON.stringify(payload),
         }).then(r => r.json());
         if (data.success) location.reload();
         else alert('Error: ' + (data.error || 'Update failed'));
     } catch { alert('Network error.'); }
+}
+
+async function reviewAppeal(campID, decision, campTitle) {
+    const notes = prompt(`${decision === 'approved' ? 'Approval' : 'Rejection'} notes for "${campTitle}":`) ?? '';
+    const data = await fetch('api/campaign_appeal.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'review', camp_id: campID, decision, notes: notes.trim() }),
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error.' }));
+    if (data.success) location.reload();
+    else alert('Error: ' + (data.error || 'Could not review appeal'));
 }
 
 // ── Role change modal ─────────────────────────────────────────────────────────
@@ -2841,11 +3036,32 @@ async function confirmRoleChange() {
 }
 
 // ── Approve / reject organizer ────────────────────────────────────────────────
+async function reviewRoleAppeal(decisionId, decision, btn) {
+    const notesEl = document.getElementById('role-appeal-notes-' + decisionId);
+    const notes = notesEl ? notesEl.value.trim() : '';
+    if (!notes) {
+        alert('Please enter review notes before deciding the appeal.');
+        notesEl?.focus();
+        return;
+    }
+    btn.disabled = true;
+    const data = await fetch('api/role_change_appeal.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'review', decision_id: decisionId, decision, notes }),
+    }).then(r => r.json()).catch(() => ({ success: false, error: 'Network error.' }));
+    if (data.success) location.reload();
+    else {
+        alert('Error: ' + (data.error || 'Could not review role appeal'));
+        btn.disabled = false;
+    }
+}
+
 async function approveOrganizer(userID, newRole, btn) {
     const notesEl = document.getElementById('decision-notes-' + userID);
     const notes   = notesEl ? notesEl.value.trim() : '';
-    if (newRole === 'donor' && !notes) {
-        alert('Please enter decision notes before rejecting.');
+    if (!notes) {
+        alert('Please enter decision notes before changing the role.');
         notesEl?.focus();
         return;
     }

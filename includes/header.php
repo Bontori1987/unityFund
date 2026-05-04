@@ -11,6 +11,7 @@ $_h_role  = $_h_user['role'] ?? 'guest';
 // Load MongoDB profile for avatar + unread count (silently skip if Mongo unavailable)
 $_h_avatar  = '';
 $_h_unread  = 0;
+$_h_stripeRequired = false;
 if ($_h_user) {
     try {
         if (!function_exists('getProfile')) require_once __DIR__ . '/mongo.php';
@@ -18,6 +19,23 @@ if ($_h_user) {
         $_h_avatar  = $_h_profile['avatar_url'] ?? '';
         $_h_unread  = countUnreadNotifications((int)$_h_user['id']);
     } catch (Exception $e) {}
+
+    if ($_h_role === 'organizer') {
+        try {
+            require_once __DIR__ . '/stripe.php';
+            $_h_stripe = getStripeAccount((int)$_h_user['id']);
+            $_h_stripeReady = (bool)($_h_stripe['onboarded'] ?? false);
+            if (!$_h_stripeReady && ($_h_stripe['account_id'] ?? '') !== '') {
+                $_h_acct = stripeRetrieveAccount($_h_stripe['account_id']);
+                $_h_fast = stripeIsTestMode()
+                    && (($_h_acct['metadata']['unityfund_fasttrack'] ?? '') === '1')
+                    && (($_h_acct['capabilities']['transfers'] ?? '') === 'active');
+                $_h_stripeReady = (!isset($_h_acct['error']) && ($_h_acct['charges_enabled'] ?? false) && ($_h_acct['payouts_enabled'] ?? false))
+                    || $_h_fast;
+            }
+            $_h_stripeRequired = !$_h_stripeReady;
+        } catch (Exception $e) {}
+    }
 }
 
 $_roleBadge = [
@@ -26,6 +44,10 @@ $_roleBadge = [
     'organizer'         => ['bg-purple',            'Organizer'],
     'admin'             => ['bg-danger',            'Admin'],
 ][$_h_role] ?? ['bg-secondary', ucfirst($_h_role)];
+
+if ($_h_stripeRequired && $_h_role === 'organizer') {
+    $_roleBadge = ['bg-warning text-dark', 'Stripe Required'];
+}
 
 $_cur = basename($_SERVER['PHP_SELF']);
 function _nav_active(string $file, string $cur): string {
@@ -149,6 +171,13 @@ function _nav_active(string $file, string $cur): string {
                                 <a class="dropdown-item py-2" href="<?= $basePath ?><?= isAdmin() ? 'admin.php' : 'my_campaigns.php' ?>">
                                     <i class="bi <?= isAdmin() ? 'bi-speedometer2' : 'bi-grid' ?> me-2 text-muted"></i>
                                     <?= isAdmin() ? 'Dashboard' : 'My Campaigns' ?>
+                                </a>
+                            </li>
+                            <?php endif; ?>
+                            <?php if ($_h_stripeRequired): ?>
+                            <li>
+                                <a class="dropdown-item py-2 text-warning" href="<?= $basePath ?>my_campaigns.php">
+                                    <i class="bi bi-lightning-charge me-2"></i>Connect Stripe to create campaigns
                                 </a>
                             </li>
                             <?php endif; ?>

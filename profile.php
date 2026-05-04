@@ -63,7 +63,7 @@ if ($isOrg) {
     // Re-verify with Stripe if account exists but not marked onboarded
     if ($stripeAccount['account_id'] !== '' && !$stripeAccount['onboarded']) {
         $acct = stripeRetrieveAccount($stripeAccount['account_id']);
-        if (!isset($acct['error']) && ($acct['charges_enabled'] ?? false)) {
+        if (!isset($acct['error']) && ($acct['charges_enabled'] ?? false) && ($acct['payouts_enabled'] ?? false)) {
             markStripeOnboarded($targetId);
             $stripeAccount['onboarded'] = true;
         }
@@ -343,6 +343,12 @@ document.getElementById('save-btn').addEventListener('click', async () => {
                         <?= $stripeAccount['account_id'] !== '' ? 'Resume Setup' : 'Connect Stripe' ?>
                     </button>
                     <?php endif; ?>
+                    <?php if ($stripeAccount['account_id'] !== ''): ?>
+                    <button class="btn btn-outline-danger btn-sm px-3 ms-2" id="stripe-reset-btn"
+                            onclick="resetStripe()">
+                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Link
+                    </button>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -377,6 +383,34 @@ async function connectStripe() {
         alert('Network error. Please try again.');
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-lightning-fill me-1"></i>Connect Stripe';
+    }
+}
+
+async function resetStripe() {
+    if (!confirm('Clear the saved Stripe connected account for this profile and start onboarding again?')) {
+        return;
+    }
+    const btn = document.getElementById('stripe-reset-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Clearing...';
+    try {
+        const data = await fetch('api/stripe_reset.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        }).then(r => r.json());
+        if (!data.success) {
+            alert('Error: ' + (data.error || 'Could not clear Stripe connection'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-1"></i>Reset Link';
+            return;
+        }
+        location.reload();
+    } catch {
+        alert('Network error. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise me-1"></i>Reset Link';
     }
 }
 </script>

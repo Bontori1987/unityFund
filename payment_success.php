@@ -27,7 +27,7 @@ if ($ref !== '') {
 
 // Check if receipt was auto-generated (trigger fires when Amt > 50)
 $receipt = null;
-if ($tx && $tx['Status'] === 'succeeded') {
+if ($tx && $tx['Status'] === 'success') {
     try {
         $stmt = $conn->prepare(
             "SELECT r.ID AS ReceiptID, r.TaxAmount, r.IssuedAt

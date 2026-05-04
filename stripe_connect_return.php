@@ -16,7 +16,7 @@ $message = '';
 if ($stripe['account_id'] !== '') {
     // Verify with Stripe that charges are actually enabled
     $account = stripeRetrieveAccount($stripe['account_id']);
-    if (!isset($account['error']) && ($account['charges_enabled'] ?? false)) {
+    if (!isset($account['error']) && ($account['charges_enabled'] ?? false) && ($account['payouts_enabled'] ?? false)) {
         markStripeOnboarded($userId);
         $success = true;
         $message = 'Your Stripe account is connected and ready to receive donations.';

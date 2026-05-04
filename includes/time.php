@@ -21,6 +21,11 @@ function mongoNow(): MongoDB\BSON\UTCDateTime {
     return new MongoDB\BSON\UTCDateTime((int)round(microtime(true) * 1000));
 }
 
+function mongoNowPlus(int $seconds): MongoDB\BSON\UTCDateTime {
+    $millis = ((int)appNow()->format('U') + $seconds) * 1000;
+    return new MongoDB\BSON\UTCDateTime($millis);
+}
+
 function formatMongoDate($date, string $format = 'M j, Y g:i A'): string {
     if (!$date instanceof MongoDB\BSON\UTCDateTime) return '';
     return $date->toDateTime()->setTimezone(appTimeZone())->format($format);

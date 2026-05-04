@@ -6,6 +6,7 @@ require_once 'db.php';
 
 $loggedIn = isLoggedIn();
 $preselect = isset($_GET['camp_id']) ? (int)$_GET['camp_id'] : 0;
+$userEmail = '';
 
 // Active campaigns for dropdown
 try {
@@ -15,6 +16,16 @@ try {
     $campaigns = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
     $campaigns = [];
+}
+
+if ($loggedIn) {
+    try {
+        $userStmt = $conn->prepare("SELECT Email FROM Users WHERE UserID = ?");
+        $userStmt->execute([(int)currentUser()['id']]);
+        $userEmail = (string)($userStmt->fetchColumn() ?: '');
+    } catch (PDOException $e) {
+        $userEmail = '';
+    }
 }
 
 require_once 'includes/header.php';
@@ -119,6 +130,31 @@ require_once 'includes/header.php';
                 </label>
             </div>
 
+            <div class="mb-4 p-3 rounded" style="border:1px solid #d8e6f7;background:#f8fbff;">
+                <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                    <div>
+                        <div class="fw-semibold mb-1">Gmail verification before payment</div>
+                        <div class="text-muted small">A one-time code is required before the card is charged.</div>
+                        <div class="small mt-2">
+                            <span class="text-muted">Account Gmail:</span>
+                            <span class="fw-semibold"><?= htmlspecialchars($userEmail) ?></span>
+                        </div>
+                    </div>
+                    <button type="button" id="sendDonationOtpBtn" class="btn btn-outline-success btn-sm fw-semibold">Send code</button>
+                </div>
+                <div class="row g-2 mt-2">
+                    <div class="col-sm-7">
+                        <input type="text" id="donationOtpCode" class="form-control" maxlength="6" inputmode="numeric"
+                               placeholder="Enter the 6-digit code from Gmail">
+                    </div>
+                    <div class="col-sm-5 d-grid">
+                        <button type="button" id="verifyDonationOtpBtn" class="btn btn-success fw-semibold">Verify code</button>
+                    </div>
+                </div>
+                <div id="donationOtpMsg" class="small mt-2 text-muted"></div>
+                <input type="hidden" id="donationOtpChallengeId" value="">
+            </div>
+
             <!-- Card details (Stripe Elements) -->
             <div class="mb-4">
                 <label class="form-label fw-semibold">Card details</label>
@@ -219,6 +255,85 @@ cardElement.on('change', e => {
     document.getElementById('card-errors').textContent = e.error ? e.error.message : '';
 });
 
+let donationOtpVerified = false;
+const donationOtpMsg = document.getElementById('donationOtpMsg');
+const donationOtpSendBtn = document.getElementById('sendDonationOtpBtn');
+const donationOtpVerifyBtn = document.getElementById('verifyDonationOtpBtn');
+const donationOtpCodeInput = document.getElementById('donationOtpCode');
+const donationOtpChallengeInput = document.getElementById('donationOtpChallengeId');
+const donationUserEmail = <?= json_encode($userEmail) ?>;
+
+function setOtpMessage(text, kind = 'muted') {
+    donationOtpMsg.textContent = text;
+    donationOtpMsg.className = `small mt-2 text-${kind}`;
+}
+
+if (!/@gmail\.com$/i.test(donationUserEmail)) {
+    donationOtpSendBtn.disabled = true;
+    donationOtpVerifyBtn.disabled = true;
+    setOtpMessage('This account must use Gmail to pass donation verification.', 'danger');
+}
+
+donationOtpSendBtn?.addEventListener('click', async () => {
+    donationOtpVerified = false;
+    donationOtpSendBtn.disabled = true;
+    donationOtpSendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Sending';
+    setOtpMessage('Sending verification code to Gmail...');
+    try {
+        const data = await fetch('api/send_email_otp.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purpose: 'donation_auth' })
+        }).then(r => r.json());
+        if (!data.success) {
+            setOtpMessage(data.error || 'Could not send code.', 'danger');
+            return;
+        }
+        donationOtpChallengeInput.value = data.challenge_id;
+        setOtpMessage('Verification code sent. Check Gmail and enter the code here.', 'success');
+    } catch {
+        setOtpMessage('Network error while sending code.', 'danger');
+    } finally {
+        donationOtpSendBtn.disabled = false;
+        donationOtpSendBtn.textContent = 'Send code';
+    }
+});
+
+donationOtpVerifyBtn?.addEventListener('click', async () => {
+    const code = donationOtpCodeInput.value.trim();
+    const challengeId = donationOtpChallengeInput.value;
+    if (!challengeId) {
+        setOtpMessage('Send a verification code first.', 'warning');
+        return;
+    }
+    if (!/^\d{6}$/.test(code)) {
+        setOtpMessage('Enter the 6-digit code exactly as sent.', 'warning');
+        return;
+    }
+    donationOtpVerifyBtn.disabled = true;
+    donationOtpVerifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verifying';
+    try {
+        const data = await fetch('api/verify_email_otp.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ purpose: 'donation_auth', challenge_id: challengeId, code })
+        }).then(r => r.json());
+        if (!data.success) {
+            donationOtpVerified = false;
+            setOtpMessage(data.error || 'Verification failed.', 'danger');
+            return;
+        }
+        donationOtpVerified = true;
+        setOtpMessage('Gmail verified. You can now complete the donation.', 'success');
+    } catch {
+        donationOtpVerified = false;
+        setOtpMessage('Network error while verifying code.', 'danger');
+    } finally {
+        donationOtpVerifyBtn.disabled = false;
+        donationOtpVerifyBtn.textContent = 'Verify code';
+    }
+});
+
 // ── Submit ────────────────────────────────────────────────────────────────────
 document.getElementById('donationForm').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -230,6 +345,10 @@ document.getElementById('donationForm').addEventListener('submit', async functio
     if (!campID)       { showResult('error', 'Please select a campaign.'); return; }
     if (!(amount > 0)) { showResult('error', 'Please enter a valid amount greater than $0.'); return; }
     if (!stripe)       { showResult('error', 'Payment system not loaded. Please refresh.'); return; }
+    if (!donationOtpVerified || !donationOtpChallengeInput.value) {
+        showResult('error', 'Verify the Gmail OTP before donating.');
+        return;
+    }
 
     const btn = document.getElementById('submitBtn');
     // Disable immediately — prevents multiple PaymentIntents on repeated clicks
@@ -243,7 +362,12 @@ document.getElementById('donationForm').addEventListener('submit', async functio
         const intentData = await fetch('api/create_payment_intent.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ camp_id: campID, amount, idempotency_key: idempotencyKey })
+            body: JSON.stringify({
+                camp_id: campID,
+                amount,
+                idempotency_key: idempotencyKey,
+                otp_challenge_id: donationOtpChallengeInput.value
+            })
         }).then(r => r.json());
 
         if (!intentData.success) {
@@ -252,6 +376,7 @@ document.getElementById('donationForm').addEventListener('submit', async functio
             btn.innerHTML = '<i class="bi bi-lock me-1"></i>Pay securely with Stripe';
             return;
         }
+        donationOtpVerified = false;
 
         // Step 2: Stripe.js confirms card with client_secret (card never hits our server)
         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Processing card…';
