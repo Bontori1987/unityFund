@@ -1,0 +1,7 @@
+<?php
+// Copy this file to stripe.local.php and fill in your Stripe test keys.
+// stripe.local.php is gitignored — never commit the actual file.
+
+define('STRIPE_SECRET_KEY',      'sk_test_YOUR_KEY_HERE');
+define('STRIPE_PUBLISHABLE_KEY', 'pk_test_YOUR_KEY_HERE');
+define('STRIPE_CURRENCY',        'usd');

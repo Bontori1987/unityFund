@@ -8,7 +8,7 @@ $password   = getenv('DB_PASSWORD') ?: "";
 
 try {
     $conn = new PDO(
-        "sqlsrv:Server=$serverName;Database=$database;Encrypt=true;TrustServerCertificate=false",
+        "sqlsrv:Server=$serverName;Database=$database;Encrypt=false;TrustServerCertificate=true",
         $username,
         $password
     );
